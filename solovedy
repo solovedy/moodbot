@@ -82,7 +82,7 @@ async def stats(update: Update, context: CallbackContext):
     await update.message.reply_photo(photo=buffer)
 
 # Запуск бота
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("8038267384:AAGSbmkV7KG09UjyxXBiPkm0SIatxIIuzp0")
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("stats", stats))
