@@ -1,1 +1,1 @@
-worker: python moodbot.py
+worker: python solovedy.py
