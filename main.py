@@ -121,32 +121,37 @@ async def my_mood_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# Запуск бота
 import os
-TOKEN = os.getenv("BOT_TOKEN")
-
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("my_mood_summary", my_mood_summary))
-    app.add_handler(CallbackQueryHandler(mood_callback))
-    
-    app.run_polling()
 from flask import Flask
 from threading import Thread
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 
-app = Flask('')
+# Получаем токен из переменных среды
+TOKEN = os.getenv("BOT_TOKEN")
 
-@app.route('/')
+# Создаём веб-сервер для "keep alive"
+app_flask = Flask('')
+
+@app_flask.route('/')
 def home():
     return "I'm alive"
 
 def run():
-    app.run(host='0.0.0.0', port=8080)
+    app_flask.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
     t = Thread(target=run)
     t.start()
-    keep_alive()
-bot.polling()
+
+# Запуск бота
+if __name__ == "__main__":
+    keep_alive()  # Запуск Flask-сервера
+
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("my_mood_summary", my_mood_summary))
+    app.add_handler(CallbackQueryHandler(mood_callback))
+
+    app.run_polling()
