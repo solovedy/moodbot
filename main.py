@@ -123,8 +123,7 @@ async def my_mood_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Запуск бота
 import os
-
-TOKEN = os.environ.get("TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
