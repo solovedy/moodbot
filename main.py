@@ -122,7 +122,9 @@ async def my_mood_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 # Запуск бота
-TOKEN = "8038267384:AAGSbmkV7KG09UjyxXBiPkm0SIatxIIuzp0"
+import os
+
+TOKEN = os.environ.get("TOKEN")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
