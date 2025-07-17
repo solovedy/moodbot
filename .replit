@@ -2,3 +2,6 @@ entrypoint = "main.py"
 
 [unitTest]
 language = "python3"
+
+[interpreter]
+command = ["python3", "-u", "main.py"]
