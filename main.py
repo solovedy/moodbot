@@ -1,206 +1,233 @@
 import logging
 import sqlite3
-import datetime
-import matplotlib.pyplot as plt
-import io
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, ContextTypes,
-    CallbackQueryHandler, MessageHandler, filters
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+
+from datetime import datetime
+import matplotlib.pyplot as plt
+import os
+
+# 🔐 Секреты
+import os
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
+
+# 📦 Логгирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 
-import os
-TOKEN = os.getenv("BOT_TOKEN")
-WEATHER_API_KEY = "ТВОЙ_API_КЛЮЧ_ПОГОДЫ"
+# 📂 Подключение к базе
+conn = sqlite3.connect("mood_data.db")
+c = conn.cursor()
 
-# Настроения
-mood_labels = {
-    1: "😣 Ужасно",
-    2: "😔 Плохо",
-    3: "😕 Так себе",
-    4: "😐 Нормально",
-    5: "🙂 Хорошо",
-    6: "😄 Отлично",
-    7: "🤩 Вау!"
-}
-
-# Логирование
-logging.basicConfig(level=logging.INFO)
-
-# БД
-conn = sqlite3.connect("mood_data.db", check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
+c.execute('''
 CREATE TABLE IF NOT EXISTS moods (
     user_id INTEGER,
     mood INTEGER,
-    date TEXT
+    timestamp TEXT
 )
-""")
-cursor.execute("""
+''')
+
+c.execute('''
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     city TEXT
 )
-""")
+''')
+
 conn.commit()
 
+# 🌈 Описание настроений
+mood_scale = {
+    1: "😞 Очень плохо",
+    2: "😟 Плохо",
+    3: "😐 Так себе",
+    4: "🙂 Нормально",
+    5: "😊 Хорошо",
+    6: "😄 Отлично",
+    7: "🤩 Супер!"
+}
 
-# Команды
+# 🖼️ Кнопки для выбора настроения
+keyboard = ReplyKeyboardMarkup(
+    [[f"{i}. {mood_scale[i]}"] for i in range(1, 8)],
+    one_time_keyboard=True,
+    resize_keyboard=True
+)
+
+# 🚀 Команды
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я помогу отслеживать твоё настроение. Используй /mood чтобы выбрать.")
-
+    await update.message.reply_text(
+        "Привет! Я бот для отслеживания настроения 🌈\n"
+        "Используй /mood чтобы выбрать настроение на сегодня."
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("""
-Доступные команды:
-/mood — Отметить настроение
-/mood_week — Настроение за неделю 📅
-/mood_month — Настроение за месяц 📈
-/mood_all — Вся история настроения 📊
-/setcity — Установить свой город 🏙
-/mycity — Посмотреть текущий город 🗺
-""")
-
+    await update.message.reply_text(
+        "🛠 Доступные команды:\n"
+        "/mood — отметить настроение\n"
+        "/mood_week — график за неделю\n"
+        "/mood_month — график за месяц\n"
+        "/mood_all — график за всё время\n"
+        "/setcity — указать свой город 🌍\n"
+        "/mycity — показать текущий город\n"
+        "/weather — погода в твоём городе ☀️"
+    )
 
 async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton(label, callback_data=str(i))]
-        for i, label in mood_labels.items()
-    ]
-    await update.message.reply_text("Как ты себя чувствуешь?", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Как ты себя сегодня чувствуешь?", reply_markup=keyboard)
 
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_id = update.message.from_user.id
 
-async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    mood = int(query.data)
-    user_id = query.from_user.id
-    date = datetime.date.today().isoformat()
+    try:
+        mood_value = int(text.split(".")[0])
+        if mood_value in mood_scale:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            c.execute("INSERT INTO moods (user_id, mood, timestamp) VALUES (?, ?, ?)", (user_id, mood_value, now))
+            conn.commit()
 
-    cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (user_id, mood, date))
-    conn.commit()
+            # 🎯 Подсказки
+            tip = ""
+            if mood_value <= 2:
+                tip = "💡 Попробуй команду /breathe для дыхательных техник или /motivate для мотивации!"
+            elif mood_value <= 4:
+                tip = "😊 Хочешь улыбнуться? Введи /joke!"
+            else:
+                tip = "🌟 Отлично, продолжай в том же духе!"
 
-    text = f"Записал твоё настроение: {mood_labels[mood]}"
+            await update.message.reply_text(f"Настроение сохранено: {mood_scale[mood_value]}\n{tip}")
+        else:
+            await update.message.reply_text("Пожалуйста, выбери настроение кнопками ниже.")
+    except:
+        await update.message.reply_text("Пожалуйста, выбери настроение кнопками ниже.")
 
-    # Подсказки
-    if mood <= 3:
-        text += "\nПопробуй /breathe, /motivate или /task"
-    elif mood == 4:
-        text += "\nМожет, анекдот? Попробуй /joke"
-    elif mood >= 5:
-        text += "\nОтлично! Продолжай в том же духе 💪"
+# 📊 Графики
+def generate_chart(user_id, period):
+    c.execute(f"SELECT timestamp, mood FROM moods WHERE user_id = ? ORDER BY timestamp", (user_id,))
+    rows = c.fetchall()
 
-    await query.edit_message_text(text)
-
-
-# График
-def generate_mood_graph(user_id, days=None):
-    if days:
-        since_date = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
-        cursor.execute("SELECT date, mood FROM moods WHERE user_id=? AND date>=?", (user_id, since_date))
+    if period == "week":
+        title = "Настроение за неделю"
+        rows = rows[-7:]
+    elif period == "month":
+        title = "Настроение за месяц"
+        rows = rows[-30:]
     else:
-        cursor.execute("SELECT date, mood FROM moods WHERE user_id=?", (user_id,))
-    
-    data = cursor.fetchall()
-    if not data:
+        title = "Настроение за всё время"
+
+    if not rows:
         return None
 
-    dates, moods = zip(*data)
-    dates = [datetime.datetime.strptime(d, "%Y-%m-%d") for d in dates]
+    dates = [row[0][:10] for row in rows]
+    moods = [row[1] for row in rows]
 
-    plt.figure(figsize=(7, 4))
-    plt.plot(dates, moods, marker='o', linestyle='-', color='purple')
-    plt.title("Настроение")
+    plt.figure(figsize=(8, 4))
+    plt.plot(dates, moods, marker='o', color='purple')
+    plt.ylim(1, 7)
+    plt.xticks(rotation=45)
+    plt.title(title)
     plt.xlabel("Дата")
-    plt.ylabel("Уровень")
-    plt.yticks(range(1, 8), [mood_labels[i] for i in range(1, 8)])
+    plt.ylabel("Настроение")
     plt.grid(True)
     plt.tight_layout()
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
+    filename = f"mood_chart_{user_id}.png"
+    plt.savefig(filename)
     plt.close()
-    return buf
+    return filename
 
-
-async def send_graph(update: Update, context: ContextTypes.DEFAULT_TYPE, days, label):
-    user_id = update.effective_user.id
-    buf = generate_mood_graph(user_id, days)
-    if not buf:
-        await update.message.reply_text("Нет данных для отображения.")
-        return
-    await update.message.reply_photo(photo=InputFile(buf), caption=f"📊 Настроение за {label}")
-
+async def mood_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, period: str):
+    user_id = update.message.from_user.id
+    chart = generate_chart(user_id, period)
+    if chart:
+        await update.message.reply_photo(photo=open(chart, 'rb'))
+        os.remove(chart)
+    else:
+        await update.message.reply_text("Нет данных для отображения графика.")
 
 async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_graph(update, context, 7, "неделю")
-
+    await mood_chart(update, context, "week")
 
 async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_graph(update, context, 31, "месяц")
-
+    await mood_chart(update, context, "month")
 
 async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_graph(update, context, None, "всё время")
+    await mood_chart(update, context, "all")
 
+# 🌍 Погода
 
-# Город
-async def setcity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Напиши свой город вот так:\n/setcity Алматы")
-        return
-    city = " ".join(context.args)
-    user_id = update.effective_user.id
-    cursor.execute("REPLACE INTO users (user_id, city) VALUES (?, ?)", (user_id, city))
-    conn.commit()
-    await update.message.reply_text(f"Город сохранён: {city}")
-
-
-async def mycity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    cursor.execute("SELECT city FROM users WHERE user_id=?", (user_id,))
-    row = cursor.fetchone()
-    if row:
-        await update.message.reply_text(f"Твой город: {row[0]}")
+async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        city = " ".join(context.args)
+        user_id = update.message.from_user.id
+        c.execute("INSERT OR REPLACE INTO users (user_id, city) VALUES (?, ?)", (user_id, city))
+        conn.commit()
+        await update.message.reply_text(f"Город сохранён: {city}")
     else:
-        await update.message.reply_text("Ты ещё не указал город. Напиши: /setcity <город>")
+        await update.message.reply_text("Использование: /setcity [название города]")
 
+async def my_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    c.execute("SELECT city FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    if row:
+        await update.message.reply_text(f"Твой текущий город: {row[0]}")
+    else:
+        await update.message.reply_text("Ты ещё не установил город. Введи команду /setcity [город]")
 
-# Погода + напоминание
-async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
-    bot = context.bot
-    cursor.execute("SELECT user_id, city FROM users")
-    for user_id, city in cursor.fetchall():
-        try:
-            # Погода
-            url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&units=metric&lang=ru&appid={WEATHER_API_KEY}"
-            res = requests.get(url).json()
-            temp = res["main"]["temp"]
-            desc = res["weather"][0]["description"]
-            message = f"🕓 Пора отметить своё настроение! /mood\n\n🌤 Погода в {city}: {temp}°C, {desc}"
-        except:
-            message = "🕓 Пора отметить своё настроение! /mood"
-        await bot.send_message(chat_id=user_id, text=message)
+async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    c.execute("SELECT city FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
 
+    if not row:
+        await update.message.reply_text("Сначала укажи город командой /setcity [город]")
+        return
 
-# Запуск
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
+    city = row[0]
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("mood", mood))
-    app.add_handler(CallbackQueryHandler(mood_callback))
-    app.add_handler(CommandHandler("mood_week", mood_week))
-    app.add_handler(CommandHandler("mood_month", mood_month))
-    app.add_handler(CommandHandler("mood_all", mood_all))
-    app.add_handler(CommandHandler("setcity", setcity))
-    app.add_handler(CommandHandler("mycity", mycity))
+    try:
+        response = requests.get(url).json()
+        weather_text = response["weather"][0]["description"].capitalize()
+        temp = response["main"]["temp"]
+        feels = response["main"]["feels_like"]
+        humidity = response["main"]["humidity"]
+        wind = response["wind"]["speed"]
 
-    # Напоминание ежедневно
-    app.job_queue.run_daily(daily_reminder, time=datetime.time(hour=13, minute=0))
+        emoji = "🌤"
+        if "дожд" in weather_text.lower(): emoji = "🌧"
+        elif "ясно" in weather_text.lower(): emoji = "☀️"
+        elif "облачно" in weather_text.lower(): emoji = "☁️"
+        elif "снег" in weather_text.lower(): emoji = "❄️"
 
-    app.run_polling()
+        await update.message.reply_text(
+            f"{emoji} Погода в {city}:\n"
+            f"📍 {weather_text}\n"
+            f"🌡 Температура: {temp}°C (Ощущается как {feels}°C)\n"
+            f"💧 Влажность: {humidity}%\n"
+            f"💨 Ветер: {wind} м/с"
+        )
+    except:
+        await update.message.reply_text("Не удалось получить данные о погоде. Проверь название города.")
+
+# 🔁 Запуск
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("help", help_command))
+app.add_handler(CommandHandler("mood", mood))
+app.add_handler(CommandHandler("mood_week", mood_week))
+app.add_handler(CommandHandler("mood_month", mood_month))
+app.add_handler(CommandHandler("mood_all", mood_all))
+app.add_handler(CommandHandler("setcity", set_city))
+app.add_handler(CommandHandler("mycity", my_city))
+app.add_handler(CommandHandler("weather", weather))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+app.run_polling()
