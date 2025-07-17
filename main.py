@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import os
 
 # 🔐 Секреты
-import os
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
 
@@ -89,27 +88,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i in range(1, 8):
             if text.strip().startswith(str(i)):
                 mood_value = i
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                c.execute("INSERT INTO moods (user_id, mood, timestamp) VALUES (?, ?, ?)", (user_id, mood_value, now))
+                conn.commit()
+
+                # 🎯 Подсказки
+                tip = ""
+                if mood_value <= 2:
+                    tip = "💡 Попробуй команду /breathe для дыхательных техник или /motivate для мотивации!"
+                elif mood_value <= 4:
+                    tip = "😊 Хочешь улыбнуться? Введи /joke!"
+                else:
+                    tip = "🌟 Отлично, продолжай в том же духе!"
+
+                await update.message.reply_text(f"Настроение сохранено: {mood_scale[mood_value]}\n{tip}")
                 break
-        else:
-            raise ValueError("Not a valid mood")
-
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT INTO moods (user_id, mood, timestamp) VALUES (?, ?, ?)", (user_id, mood_value, now))
-        conn.commit()
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            c.execute("INSERT INTO moods (user_id, mood, timestamp) VALUES (?, ?, ?)", (user_id, mood_value, now))
-            conn.commit()
-
-            # 🎯 Подсказки
-            tip = ""
-            if mood_value <= 2:
-                tip = "💡 Попробуй команду /breathe для дыхательных техник или /motivate для мотивации!"
-            elif mood_value <= 4:
-                tip = "😊 Хочешь улыбнуться? Введи /joke!"
-            else:
-                tip = "🌟 Отлично, продолжай в том же духе!"
-
-            await update.message.reply_text(f"Настроение сохранено: {mood_scale[mood_value]}\n{tip}")
         else:
             await update.message.reply_text("Пожалуйста, выбери настроение кнопками ниже.")
     except:
@@ -202,17 +195,19 @@ async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         response = requests.get(url).json()
-        weather_text = response["weather"][0]["description"].capitalize()
-        # Добавляем подпись, связанную с погодой
-    mood_comment = ""
-    if "rain" in weather_description.lower():
-        mood_comment = "🌧️ Дождливо... Может казаться тоскливо, но плед и тёплый чай спасают атмосферу ☕"
-    elif "cloud" in weather_description.lower():
-        mood_comment = "☁️ Сегодня облачно — иногда и на душе может быть также. Подари себе немного тепла 💙"
-    elif "clear" in weather_description.lower() or "sun" in weather_description.lower():
-        mood_comment = "🌞 Ясно и солнечно! Отличный день для прогулки или любимого дела ✨"
-    elif "snow" in weather_description.lower():
-        mood_comment = "❄️ Снег за окном — как повод замедлиться и укутаться в уют 💭"
+        weather_description = response["weather"][0]["description"]
+        weather_text = weather_description.capitalize()
+
+        mood_comment = ""
+        if "rain" in weather_description.lower():
+            mood_comment = "🌧️ Дождливо... Может казаться тоскливо, но плед и тёплый чай спасают атмосферу ☕"
+        elif "cloud" in weather_description.lower():
+            mood_comment = "☁️ Сегодня облачно — иногда и на душе может быть также. Подари себе немного тепла 💙"
+        elif "clear" in weather_description.lower() or "sun" in weather_description.lower():
+            mood_comment = "🌞 Ясно и солнечно! Отличный день для прогулки или любимого дела ✨"
+        elif "snow" in weather_description.lower():
+            mood_comment = "❄️ Снег за окном — как повод замедлиться и укутаться в уют 💭"
+
         temp = response["main"]["temp"]
         feels = response["main"]["feels_like"]
         humidity = response["main"]["humidity"]
@@ -224,14 +219,14 @@ async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif "облачно" in weather_text.lower(): emoji = "☁️"
         elif "снег" in weather_text.lower(): emoji = "❄️"
 
-      await update.message.reply_text(
+        await update.message.reply_text(
             f"{emoji} Погода в {city}:\n"
             f"📍 {weather_text}\n"
             f"🌡 Температура: {temp}°C (Ощущается как {feels}°C)\n"
             f"💧 Влажность: {humidity}%\n"
             f"💨 Ветер: {wind} м/с\n\n"
             f"{mood_comment}"
-        ) 
+        )
     except:
         await update.message.reply_text("Не удалось получить данные о погоде. Проверь название города.")
 
