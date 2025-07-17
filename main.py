@@ -1,143 +1,152 @@
-import sqlite3
-import matplotlib.pyplot as plt
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-import logging
-import datetime
-import io
-
-# Логирование
-logging.basicConfig(level=logging.INFO)
-
-# Подключение к БД
-conn = sqlite3.connect('mood_data.db', check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""CREATE TABLE IF NOT EXISTS moods (
-    user_id INTEGER,
-    username TEXT,
-    mood TEXT,
-    date TEXT
-)""")
-conn.commit()
-
-# Шкала настроения
-mood_options = [
-    ("1", "Полный штиль — ни эмоций, ни энергии"),
-    ("2", "Тучи сгущаются, но держусь"),
-    ("3", "Погода пасмурная, но жить можно"),
-    ("4", "Ветер перемен — уже легче"),
-    ("5", "На горизонте солнце — есть надежда"),
-    ("6", "Светло, тепло, и сердце спокойно"),
-    ("7", "Вау! Летаю от счастья и вдохновения")
-]
-
-# Команда /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton(text, callback_data=value)] for value, text in mood_options]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("👋 Привет! Оцени своё настроение по шкале:", reply_markup=reply_markup)
-
-# Обработка выбора настроения
-async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    mood_value = query.data
-    user = query.from_user
-    username = user.username or user.first_name
-    date = datetime.date.today().isoformat()
-    mood_text = next(text for value, text in mood_options if value == mood_value)
-
-    cursor.execute("INSERT INTO moods VALUES (?, ?, ?, ?)", (user.id, username, mood_text, date))
-    conn.commit()
-
-    await query.edit_message_text(f"📝 Настроение записано: {mood_text}")
-
-# Команда /stats — общее настроение
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cursor.execute("SELECT mood FROM moods")
-    moods = [row[0] for row in cursor.fetchall()]
-    if not moods:
-        await update.message.reply_text("😕 Пока нет данных о настроении.")
-        return
-
-    mood_counts = {text: moods.count(text) for _, text in mood_options if moods.count(text) > 0}
-    labels = list(mood_counts.keys())
-    values = list(mood_counts.values())
-
-    plt.figure(figsize=(10, 5))
-    bars = plt.barh(labels, values, color="skyblue")
-    plt.xlabel("Количество")
-    plt.title("📊 Статистика настроения чата")
-    plt.tight_layout()
-
-    buffer = io.BytesIO()
-    plt.savefig(buffer, format="png")
-    buffer.seek(0)
-    await update.message.reply_photo(photo=buffer)
-
-# Команда /my_mood_summary — личный итог за неделю
-async def my_mood_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    today = datetime.date.today()
-    week_ago = today - datetime.timedelta(days=7)
-
-    cursor.execute("SELECT mood FROM moods WHERE user_id=? AND date>=?", (user.id, week_ago.isoformat()))
-    mood_rows = cursor.fetchall()
-
-    if not mood_rows:
-        await update.message.reply_text("📭 У вас пока нет записей за последнюю неделю.")
-        return
-
-    # Определяем числовые значения
-    mood_values = []
-    for row in mood_rows:
-        for value, text in mood_options:
-            if text == row[0]:
-                mood_values.append(int(value))
-
-    avg_mood = round(sum(mood_values) / len(mood_values), 1)
-
-    # Подбор ответа
-    if avg_mood <= 3:
-        text = (
-            f"💔 За последнюю неделю ваше среднее настроение: *{avg_mood}*\n\n"
-            "Берегите себя. Всё обязательно наладится 💙\n"
-            "Рекомендую попробовать:\n"
-            "`/breathe` — дыхательные упражнения\n"
-            "`/motivate` — мотивация\n"
-            "`/advice` — советы для улучшения состояния"
-        )
-    elif 4 <= avg_mood <= 5:
-        text = (
-            f"🙂 Ваше среднее настроение за неделю: *{avg_mood}*\n\n"
-            "Вы держитесь молодцом! 💪\n"
-            "Попробуйте отвлечься немного: `/joke` — случайная шутка 😄"
-        )
-    else:
-        text = (
-            f"🌟 Ваше среднее настроение за неделю: *{avg_mood}*\n\n"
-            "Продолжайте в том же духе! Пусть всё остаётся так же хорошо ❤️"
-        )
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
 import os
+import sqlite3
+import logging
+import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes,
+    CallbackQueryHandler, JobQueue
+)
+from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 
-# Получаем токен из переменных среды
+# Настройка логов
+logging.basicConfig(level=logging.INFO)
+
+# Токен бота
 TOKEN = os.getenv("BOT_TOKEN")
 
-# Создаём веб-сервер для "keep alive"
-app_flask = Flask('')
+# Подключение к БД
+conn = sqlite3.connect("mood_data.db", check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''CREATE TABLE IF NOT EXISTS moods (
+    user_id INTEGER,
+    mood INTEGER,
+    date TEXT
+)''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS cities (
+    user_id INTEGER PRIMARY KEY,
+    city TEXT
+)''')
+conn.commit()
 
-@app_flask.route('/')
+# Напоминание
+async def send_mood_reminder(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.chat_id
+    keyboard = [
+        [
+            InlineKeyboardButton("😞", callback_data="1"),
+            InlineKeyboardButton("🙁", callback_data="2"),
+            InlineKeyboardButton("😐", callback_data="3"),
+            InlineKeyboardButton("🙂", callback_data="4"),
+            InlineKeyboardButton("😄", callback_data="5"),
+            InlineKeyboardButton("🤩", callback_data="6"),
+            InlineKeyboardButton("🔥", callback_data="7")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await context.bot.send_message(chat_id=chat_id, text="Как ты себя чувствуешь сегодня?", reply_markup=reply_markup)
+
+# Получить среднее настроение
+def get_average_mood(user_id, days=None):
+    if days:
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cursor.execute("SELECT mood FROM moods WHERE user_id=? AND date >= ?", (user_id, start_date))
+    else:
+        cursor.execute("SELECT mood FROM moods WHERE user_id=?", (user_id,))
+    rows = cursor.fetchall()
+    if not rows:
+        return None
+    return sum(row[0] for row in rows) / len(rows)
+
+# Обработчики команд
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я бот для отслеживания настроения. Используй /mood, чтобы указать своё настроение.")
+
+async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [
+            InlineKeyboardButton("😞", callback_data="1"),
+            InlineKeyboardButton("🙁", callback_data="2"),
+            InlineKeyboardButton("😐", callback_data="3"),
+            InlineKeyboardButton("🙂", callback_data="4"),
+            InlineKeyboardButton("😄", callback_data="5"),
+            InlineKeyboardButton("🤩", callback_data="6"),
+            InlineKeyboardButton("🔥", callback_data="7")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Выбери своё настроение:", reply_markup=reply_markup)
+
+async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    mood = int(query.data)
+    user_id = query.from_user.id
+    date = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (user_id, mood, date))
+    conn.commit()
+    await query.answer("Настроение сохранено! 😊")
+
+async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    avg = get_average_mood(update.effective_user.id, 7)
+    if avg is None:
+        await update.message.reply_text("Нет данных за неделю.")
+    else:
+        await update.message.reply_text(f"Среднее настроение за неделю: {avg:.1f}")
+
+async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    avg = get_average_mood(update.effective_user.id, 30)
+    if avg is None:
+        await update.message.reply_text("Нет данных за месяц.")
+    else:
+        await update.message.reply_text(f"Среднее настроение за месяц: {avg:.1f}")
+
+async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    avg = get_average_mood(update.effective_user.id)
+    if avg is None:
+        await update.message.reply_text("Нет данных.")
+    else:
+        await update.message.reply_text(f"Среднее настроение за всё время: {avg:.1f}")
+
+async def setcity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        city = " ".join(context.args)
+        cursor.execute("REPLACE INTO cities (user_id, city) VALUES (?, ?)", (update.effective_user.id, city))
+        conn.commit()
+        await update.message.reply_text(f"Город установлен: {city}")
+    else:
+        await update.message.reply_text("Пожалуйста, укажи город после команды. Пример: /setcity Алматы")
+
+async def mycity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cursor.execute("SELECT city FROM cities WHERE user_id=?", (update.effective_user.id,))
+    row = cursor.fetchone()
+    if row:
+        city = row[0]
+        await update.message.reply_text(f"Твой выбранный город: {city}")
+    else:
+        await update.message.reply_text("Город не установлен. Используй /setcity <город>.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("""Вот что я умею:
+/start — начать
+/mood — указать настроение
+/mood_week — настроение за неделю
+/mood_month — настроение за месяц
+/mood_all — настроение за всё время
+/setcity <город> — установить свой город
+/mycity — показать твой город
+/help — показать список команд
+""")
+
+# Веб-сервер для поддержания активности
+app = Flask('')
+@app.route('/')
 def home():
-    return "I'm alive"
+    return "Бот активен"
 
 def run():
-    app_flask.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
     t = Thread(target=run)
@@ -145,13 +154,25 @@ def keep_alive():
 
 # Запуск бота
 if __name__ == "__main__":
-    keep_alive()  # Запуск Flask-сервера
+    keep_alive()
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("mood", mood))
+    application.add_handler(CallbackQueryHandler(mood_callback))
+    application.add_handler(CommandHandler("mood_week", mood_week))
+    application.add_handler(CommandHandler("mood_month", mood_month))
+    application.add_handler(CommandHandler("mood_all", mood_all))
+    application.add_handler(CommandHandler("setcity", setcity))
+    application.add_handler(CommandHandler("mycity", mycity))
+    application.add_handler(CommandHandler("help", help_command))
 
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("my_mood_summary", my_mood_summary))
-    app.add_handler(CallbackQueryHandler(mood_callback))
-
-    app.run_polling()
+    # Напоминание каждый день
+    async def schedule_reminders(app):
+        for chat_id in set(row[0] for row in cursor.execute("SELECT DISTINCT user_id FROM moods")):
+            application.job_queue.run_daily(
+                send_mood_reminder,
+                time=datetime.now().time(),  # любое подходящее время
+                chat_id=chat_id
+            )
+    application.job_queue.run_once(lambda c: schedule_reminders(application), when=1)
+    application.run_polling()
