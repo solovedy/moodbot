@@ -6,8 +6,10 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import asyncio
 
 # Telegram и OpenWeather ключи
-BOT_TOKEN = "ТВОЙ_ТОКЕН"
-WEATHER_API_KEY = "ТВОЙ_WEATHER_API_КЛЮЧ"
+import os
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
 # Подключение к базе данных
 conn = sqlite3.connect("moodbot.db", check_same_thread=False)
@@ -165,3 +167,16 @@ if __name__ == "__main__":
             loop.run_forever()
         else:
             raise
+            from flask import Flask
+from threading import Thread
+
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "I'm alive!"
+
+def run():
+    app_flask.run(host='0.0.0.0', port=8080)
+
+Thread(target=run).start()
