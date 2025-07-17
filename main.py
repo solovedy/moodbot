@@ -86,8 +86,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
     try:
-        mood_value = int(text.split(".")[0])
-        if mood_value in mood_scale:
+        for i in range(1, 8):
+            if text.strip().startswith(str(i)):
+                mood_value = i
+                break
+        else:
+            raise ValueError("Not a valid mood")
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("INSERT INTO moods (user_id, mood, timestamp) VALUES (?, ?, ?)", (user_id, mood_value, now))
+        conn.commit()
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("INSERT INTO moods (user_id, mood, timestamp) VALUES (?, ?, ?)", (user_id, mood_value, now))
             conn.commit()
@@ -195,6 +203,16 @@ async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = requests.get(url).json()
         weather_text = response["weather"][0]["description"].capitalize()
+        # Добавляем подпись, связанную с погодой
+    mood_comment = ""
+    if "rain" in weather_description.lower():
+        mood_comment = "🌧️ Дождливо... Может казаться тоскливо, но плед и тёплый чай спасают атмосферу ☕"
+    elif "cloud" in weather_description.lower():
+        mood_comment = "☁️ Сегодня облачно — иногда и на душе может быть также. Подари себе немного тепла 💙"
+    elif "clear" in weather_description.lower() or "sun" in weather_description.lower():
+        mood_comment = "🌞 Ясно и солнечно! Отличный день для прогулки или любимого дела ✨"
+    elif "snow" in weather_description.lower():
+        mood_comment = "❄️ Снег за окном — как повод замедлиться и укутаться в уют 💭"
         temp = response["main"]["temp"]
         feels = response["main"]["feels_like"]
         humidity = response["main"]["humidity"]
@@ -206,13 +224,14 @@ async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif "облачно" in weather_text.lower(): emoji = "☁️"
         elif "снег" in weather_text.lower(): emoji = "❄️"
 
-        await update.message.reply_text(
+      await update.message.reply_text(
             f"{emoji} Погода в {city}:\n"
             f"📍 {weather_text}\n"
             f"🌡 Температура: {temp}°C (Ощущается как {feels}°C)\n"
             f"💧 Влажность: {humidity}%\n"
-            f"💨 Ветер: {wind} м/с"
-        )
+            f"💨 Ветер: {wind} м/с\n\n"
+            f"{mood_comment}"
+        ) 
     except:
         await update.message.reply_text("Не удалось получить данные о погоде. Проверь название города.")
 
