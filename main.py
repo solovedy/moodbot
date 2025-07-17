@@ -1,3 +1,14 @@
+from flask import Flask
+from threading import Thread
+
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "I'm alive!"
+
+def run():
+    app_flask.run(host='0.0.0.0', port=8080)
 import sqlite3
 import requests
 from datetime import datetime
@@ -157,26 +168,15 @@ if __name__ == "__main__":
 
     nest_asyncio.apply()
 
+    # ← Запускаем Flask-сервер
+    Thread(target=run).start()
+
     try:
         asyncio.run(main())
     except RuntimeError as e:
         if str(e).startswith("This event loop is already running"):
-            # Специально для Replit
             loop = asyncio.get_event_loop()
             loop.create_task(main())
             loop.run_forever()
         else:
             raise
-            from flask import Flask
-from threading import Thread
-
-app_flask = Flask('')
-
-@app_flask.route('/')
-def home():
-    return "I'm alive!"
-
-def run():
-    app_flask.run(host='0.0.0.0', port=8080)
-
-Thread(target=run).start()
