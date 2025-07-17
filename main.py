@@ -153,5 +153,15 @@ if __name__ == "__main__":
     import nest_asyncio
     import asyncio
 
-    nest_asyncio.apply()  # 👈 Это позволяет Replit запускать event loop повторно
-    asyncio.get_event_loop().run_until_complete(main())
+    nest_asyncio.apply()
+
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if str(e).startswith("This event loop is already running"):
+            # Специально для Replit
+            loop = asyncio.get_event_loop()
+            loop.create_task(main())
+            loop.run_forever()
+        else:
+            raise
