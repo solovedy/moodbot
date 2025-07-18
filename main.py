@@ -1,174 +1,209 @@
+import asyncio
+import sqlite3
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import os
+import requests
+from io import BytesIO
+
 from flask import Flask
 from threading import Thread
 
+from telegram import Update, ReplyKeyboardMarkup, InputFile
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
+)
+
+# 📌 Настройка переменных
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+WEATHER_TOKEN = os.environ.get("WEATHER_TOKEN")
+
+# 🛠️ База данных
+conn = sqlite3.connect("mood.db", check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS moods (
+        user_id INTEGER,
+        mood INTEGER,
+        date TEXT
+    )
+''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS cities (
+        user_id INTEGER PRIMARY KEY,
+        city TEXT
+    )
+''')
+conn.commit()
+
+# 🧠 Подписи к настроениям
+mood_keyboard = ReplyKeyboardMarkup(
+    [[
+        "1 💀 Хочу исчезнуть", "2 🌧️ Всё валится из рук", "3 😕 День какой-то не такой"
+    ], [
+        "4 😐 Просто день", "5 🌿 Внутренний дзен", "6 🌞 На подъёме!", "7 🚀 Я лечу от счастья!"
+    ]],
+    resize_keyboard=True
+)
+
+# 🌤 Получение погоды
+def get_weather(city: str) -> str:
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_TOKEN}&units=metric&lang=ru"
+    response = requests.get(url)
+    if response.status_code != 200:
+        return "Не удалось получить погоду 😢"
+
+    data = response.json()
+    temp = data['main']['temp']
+    feels_like = data['main']['feels_like']
+    description = data['weather'][0]['description'].capitalize()
+    emoji = "☀️" if "clear" in data['weather'][0]['main'].lower() else "🌥️"
+    return f"{emoji} В {city} сейчас {temp}°C, ощущается как {feels_like}°C. {description}."
+
+# 🌤 /weather
+async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cursor.execute("SELECT city FROM cities WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        await update.message.reply_text("Сначала укажи свой город с помощью /setcity 🌍")
+        return
+    city = row[0]
+    await update.message.reply_text(get_weather(city))
+
+# 📍 /setcity
+async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Напиши так: /setcity [город], например: /setcity Алматы")
+        return
+    city = " ".join(context.args)
+    user_id = update.effective_user.id
+    cursor.execute("INSERT OR REPLACE INTO cities (user_id, city) VALUES (?, ?)", (user_id, city))
+    conn.commit()
+    await update.message.reply_text(f"Твой город сохранён: {city} ✅")
+
+# 📍 /mycity
+async def my_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cursor.execute("SELECT city FROM cities WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if row:
+        await update.message.reply_text(f"Твой город: {row[0]} 🏙️")
+    else:
+        await update.message.reply_text("Ты ещё не указал город. Используй /setcity [город]")
+
+# 🆘 /help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "✨ Команды бота:\n"
+        "/start — начать общение\n"
+        "/mood — выбрать настроение\n"
+        "/mood_week — график настроения за неделю\n"
+        "/setcity [город] — установить город\n"
+        "/mycity — показать текущий город\n"
+        "/weather — узнать погоду в своём городе\n"
+        "/help — список команд"
+    )
+
+# 👋 /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Привет! 😊 Я помогу тебе отслеживать настроение и погоду.\n\n"
+        "Нажми /mood чтобы отметить, как ты себя чувствуешь 💬"
+    )
+
+# 🌡 /mood
+async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Как ты себя чувствуешь сегодня?", reply_markup=mood_keyboard)
+
+# 💬 обработка настроения
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message.text
+    user_id = update.effective_user.id
+
+    if message[0].isdigit():
+        mood_value = int(message[0])
+        cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (
+            user_id, mood_value, datetime.now().strftime("%Y-%m-%d")
+        ))
+        conn.commit()
+
+        responses = {
+            1: "😩 Держись! Попробуй /breathe или /advice — они помогут немного облегчить день.",
+            2: "😣 Это пройдёт. Попробуй /motivate или /breathe — тебе станет легче!",
+            3: "😕 Надеюсь, день станет лучше. Загляни в /joke для улыбки.",
+            4: "🙂 Неплохо! Продолжай в том же духе.",
+            5: "😌 Спокойствие — это круто. Наслаждайся моментом!",
+            6: "😀 Отлично! Заряжай позитивом других!",
+            7: "🤩 Ура! Такое настроение вдохновляет! ⭐"
+        }
+
+        await update.message.reply_text(responses[mood_value])
+    else:
+        await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
+
+# 📊 /mood_week
+async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    one_week_ago = datetime.now() - timedelta(days=6)
+
+    cursor.execute('''
+        SELECT date, AVG(mood) FROM moods
+        WHERE user_id = ? AND date >= ?
+        GROUP BY date
+    ''', (user_id, one_week_ago.strftime("%Y-%m-%d")))
+    rows = cursor.fetchall()
+
+    if not rows:
+        await update.message.reply_text("У тебя пока нет данных за неделю.")
+        return
+
+    dates = [datetime.strptime(row[0], "%Y-%m-%d").strftime("%d.%m") for row in rows]
+    moods = [row[1] for row in rows]
+
+    plt.figure(figsize=(7, 4))
+    plt.plot(dates, moods, marker='o', linestyle='-', color='mediumpurple')
+    plt.title("Твоё настроение за неделю 💭")
+    plt.ylim(0, 7.5)
+    plt.grid(True)
+    plt.tight_layout()
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    await update.message.reply_photo(photo=InputFile(buf, filename="mood.png"))
+    plt.close()
+
+# 🌐 Flask-сервер для UptimeRobot
 app_flask = Flask('')
 
 @app_flask.route('/')
 def home():
-    return "I'm alive!"
+    return "I'm alive! 🤖"
 
 def run():
     app_flask.run(host='0.0.0.0', port=8080)
-import sqlite3
-import requests
-from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import asyncio
 
-# Telegram и OpenWeather ключи
-import os
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
-
-# Подключение к базе данных
-conn = sqlite3.connect("moodbot.db", check_same_thread=False)
-c = conn.cursor()
-
-# Создание таблиц, если не существуют
-c.execute('''CREATE TABLE IF NOT EXISTS moods (
-    user_id INTEGER,
-    mood INTEGER,
-    timestamp TEXT
-)''')
-
-c.execute('''CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    city TEXT
-)''')
-
-conn.commit()
-
-# 🌤 Получить погоду по городу
-async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    c.execute("SELECT city FROM users WHERE user_id = ?", (user_id,))
-    row = c.fetchone()
-
-    if not row:
-        await update.message.reply_text("Сначала укажи город командой /setcity [город]")
-        return
-
-    city = row[0]
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
-
-    try:
-        response = requests.get(url).json()
-        weather_description = response["weather"][0]["description"]
-        temp = response["main"]["temp"]
-        feels = response["main"]["feels_like"]
-        humidity = response["main"]["humidity"]
-        wind = response["wind"]["speed"]
-
-        emoji = "🌤"
-        if "дожд" in weather_description.lower(): emoji = "🌧"
-        elif "ясно" in weather_description.lower(): emoji = "☀️"
-        elif "облачно" in weather_description.lower(): emoji = "☁️"
-        elif "снег" in weather_description.lower(): emoji = "❄️"
-
-        # 🌈 Добавляем подпись, связанную с погодой
-        mood_comment = ""
-        if "rain" in weather_description.lower():
-            mood_comment = "🌧️ Дождливо... Может казаться тоскливо, но плед и тёплый чай спасают атмосферу ☕"
-        elif "cloud" in weather_description.lower():
-            mood_comment = "☁️ Сегодня облачно — иногда и на душе может быть также. Подари себе немного тепла 💙"
-        elif "clear" in weather_description.lower() or "sun" in weather_description.lower():
-            mood_comment = "🌞 Ясно и солнечно! Отличный день для прогулки или любимого дела ✨"
-        elif "snow" in weather_description.lower():
-            mood_comment = "❄️ Снег за окном — как повод замедлиться и укутаться в уют 💭"
-
-        await update.message.reply_text(
-            f"{emoji} Погода в {city.title()}:\n"
-            f"📍 {weather_description.capitalize()}\n"
-            f"🌡 Температура: {temp}°C (Ощущается как {feels}°C)\n"
-            f"💧 Влажность: {humidity}%\n"
-            f"💨 Ветер: {wind} м/с\n\n"
-            f"{mood_comment}"
-        )
-    except:
-        await update.message.reply_text("Не удалось получить данные о погоде. Проверь название города.")
-
-# Установка города
-async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
-        city = " ".join(context.args)
-        user_id = update.message.from_user.id
-        c.execute("INSERT OR REPLACE INTO users (user_id, city) VALUES (?, ?)", (user_id, city))
-        conn.commit()
-        await update.message.reply_text(f"Город сохранён: {city}")
-    else:
-        await update.message.reply_text("Использование: /setcity [город]")
-
-# Проверка текущего города
-async def my_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    c.execute("SELECT city FROM users WHERE user_id = ?", (user_id,))
-    row = c.fetchone()
-    if row:
-        await update.message.reply_text(f"Твой текущий город: {row[0]}")
-    else:
-        await update.message.reply_text("Ты ещё не установил город. Введи команду /setcity [город]")
-
-# Обработка команды /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = ReplyKeyboardMarkup([
-        [KeyboardButton("1 😩"), KeyboardButton("2 😟"), KeyboardButton("3 😕")],
-        [KeyboardButton("4 🙂"), KeyboardButton("5 😄"), KeyboardButton("6 🤩"), KeyboardButton("7 🥳")],
-        [KeyboardButton("/weather")]
-    ], resize_keyboard=True)
-
-    await update.message.reply_text(
-        "Привет! Я бот для отслеживания твоего настроения.\n\n"
-        "Выбери своё настроение ниже или напиши цифру от 1 до 7.\n"
-        "А ещё я могу показывать погоду ☁️ — команда /weather\n\n"
-        "Установить город: /setcity [название]\n"
-        "Проверить город: /mycity",
-        reply_markup=keyboard
-    )
-
-# Обработка сообщения с настроением
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.message.from_user.id
-
-    try:
-        for i in range(1, 8):
-            if text.strip().startswith(str(i)):
-                mood_value = i
-                break
-        else:
-            raise ValueError("Not a valid mood")
-
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT INTO moods (user_id, mood, timestamp) VALUES (?, ?, ?)", (user_id, mood_value, now))
-        conn.commit()
-
-        await update.message.reply_text("Настроение сохранено! 💖")
-
-    except Exception as e:
-        await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок ниже или введи цифру от 1 до 7.")
-
-# Запуск бота
+# 🚀 Запуск
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("weather", weather))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("mood", mood))
+    app.add_handler(CommandHandler("mood_week", mood_week))
     app.add_handler(CommandHandler("setcity", set_city))
     app.add_handler(CommandHandler("mycity", my_city))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    app.add_handler(CommandHandler("weather", weather))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Бот запущен!")
+    print("Бот запущен! ✅")
     await app.run_polling()
 
 if __name__ == "__main__":
     import nest_asyncio
-    import asyncio
-
     nest_asyncio.apply()
-
-    # ← Запускаем Flask-сервер
     Thread(target=run).start()
 
     try:
