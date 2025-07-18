@@ -17,7 +17,7 @@ from telegram.ext import (
 
 # 📌 Настройка переменных
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-WEATHER_TOKEN = os.environ.get("WEATHER_TOKEN")
+WEATHER_TOKEN = os.environ.get("WEATHER_API_KEY")
 
 # 🛠️ База данных
 conn = sqlite3.connect("mood.db", check_same_thread=False)
@@ -99,10 +99,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✨ Команды бота:\n"
         "/start — начать общение\n"
         "/mood — выбрать настроение\n"
-        "/mood_week — график настроения за неделю\n"
+        "/mood_week — график за неделю\n"
+        "/mood_month — график за месяц\n"
+        "/mood_all — график за всё время\n"
         "/setcity [город] — установить город\n"
         "/mycity — показать текущий город\n"
-        "/weather — узнать погоду в своём городе\n"
+        "/weather — узнать погоду\n"
         "/help — список команд"
     )
 
@@ -143,37 +145,72 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
 
-# 📊 /mood_week
-async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 📊 Общая функция построения графика
+async def send_mood_graph(update: Update, days: int = None):
     user_id = update.effective_user.id
-    one_week_ago = datetime.now() - timedelta(days=6)
+    if days:
+        since = datetime.now() - timedelta(days=days - 1)
+        cursor.execute('''
+            SELECT date, AVG(mood) FROM moods
+            WHERE user_id = ? AND date >= ?
+            GROUP BY date
+        ''', (user_id, since.strftime("%Y-%m-%d")))
+    else:
+        cursor.execute('''
+            SELECT date, AVG(mood) FROM moods
+            WHERE user_id = ?
+            GROUP BY date
+        ''', (user_id,))
 
-    cursor.execute('''
-        SELECT date, AVG(mood) FROM moods
-        WHERE user_id = ? AND date >= ?
-        GROUP BY date
-    ''', (user_id, one_week_ago.strftime("%Y-%m-%d")))
     rows = cursor.fetchall()
-
     if not rows:
-        await update.message.reply_text("У тебя пока нет данных за неделю.")
+        await update.message.reply_text("Пока нет данных для отображения графика 📉")
         return
 
     dates = [datetime.strptime(row[0], "%Y-%m-%d").strftime("%d.%m") for row in rows]
     moods = [row[1] for row in rows]
 
-    plt.figure(figsize=(7, 4))
-    plt.plot(dates, moods, marker='o', linestyle='-', color='mediumpurple')
-    plt.title("Твоё настроение за неделю 💭")
-    plt.ylim(0, 7.5)
-    plt.grid(True)
+    # 🌈 Оформление графика
+    mood_labels = {
+        1: "😩", 2: "😣", 3: "😕",
+        4: "🙂", 5: "😌", 6: "😀", 7: "🤩"
+    }
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    fig.patch.set_facecolor('#f7f7fa')
+    ax.set_facecolor('#ffffff')
+
+    ax.plot(dates, moods, color='mediumpurple', linewidth=2, marker='o', markersize=7, markerfacecolor='violet')
+
+    ax.set_ylim(0.5, 7.5)
+    ax.set_yticks(range(1, 8))
+    ax.set_yticklabels([mood_labels[i] for i in range(1, 8)], fontsize=14)
+
+    ax.set_title("📈 Настроение по дням", fontsize=16, color='purple', pad=15)
+    ax.set_xlabel("Дата", fontsize=12)
+    ax.set_ylabel("Настроение", fontsize=12)
+
+    ax.grid(True, linestyle='--', alpha=0.5)
+    plt.xticks(rotation=45)
     plt.tight_layout()
 
     buf = BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     await update.message.reply_photo(photo=InputFile(buf, filename="mood.png"))
     plt.close()
+
+# 📊 /mood_week
+async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update, days=7)
+
+# 📊 /mood_month
+async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update, days=30)
+
+# 📊 /mood_all
+async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update)
 
 # 🌐 Flask-сервер для UptimeRobot
 app_flask = Flask('')
@@ -193,6 +230,8 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("mood", mood))
     app.add_handler(CommandHandler("mood_week", mood_week))
+    app.add_handler(CommandHandler("mood_month", mood_month))
+    app.add_handler(CommandHandler("mood_all", mood_all))
     app.add_handler(CommandHandler("setcity", set_city))
     app.add_handler(CommandHandler("mycity", my_city))
     app.add_handler(CommandHandler("weather", weather))
