@@ -217,6 +217,11 @@ async def main():
     app.add_handler(CommandHandler("setcity", set_city))
     app.add_handler(CommandHandler("mycity", my_city))
     app.add_handler(CommandHandler("weather", weather))
+
+    # 💬 Обработка нажатий на кнопки после /mood
+    app.add_handler(CallbackQueryHandler(handle_message))
+
+    # 🧾 Обработка текстовых сообщений от 1 до 7
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Бот запущен! ✅")
