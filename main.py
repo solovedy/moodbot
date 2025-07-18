@@ -145,21 +145,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
 
-# 📊 Общая функция построения графика
+# 📊 Общая функция построения графика (обновлённая)
 async def send_mood_graph(update: Update, days: int = None):
     user_id = update.effective_user.id
     if days:
         since = datetime.now() - timedelta(days=days - 1)
         cursor.execute('''
-            SELECT date, AVG(mood) FROM moods
+            SELECT date, mood FROM moods
             WHERE user_id = ? AND date >= ?
-            GROUP BY date
+            ORDER BY date
         ''', (user_id, since.strftime("%Y-%m-%d")))
     else:
         cursor.execute('''
-            SELECT date, AVG(mood) FROM moods
+            SELECT date, mood FROM moods
             WHERE user_id = ?
-            GROUP BY date
+            ORDER BY date
         ''', (user_id,))
 
     rows = cursor.fetchall()
@@ -167,33 +167,48 @@ async def send_mood_graph(update: Update, days: int = None):
         await update.message.reply_text("Пока нет данных для отображения графика 📉")
         return
 
+    # 🎯 Обработка данных
     dates = [datetime.strptime(row[0], "%Y-%m-%d").strftime("%d.%m") for row in rows]
     moods = [row[1] for row in rows]
 
-    # 🌈 Оформление графика
     mood_labels = {
-        1: "😩", 2: "😣", 3: "😕",
-        4: "🙂", 5: "😌", 6: "😀", 7: "🤩"
+        1: "💀", 2: "🌧️", 3: "😕",
+        4: "😐", 5: "🌿", 6: "🌞", 7: "🚀"
     }
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    colors = {
+        1: "#6b6b6b", 2: "#5c88c4", 3: "#9e9e9e",
+        4: "#b0b0b0", 5: "#88c788", 6: "#f0c14b", 7: "#ff69b4"
+    }
+
+    # 🎨 График
+    fig, ax = plt.subplots(figsize=(9, 5))
     fig.patch.set_facecolor('#f7f7fa')
     ax.set_facecolor('#ffffff')
 
-    ax.plot(dates, moods, color='mediumpurple', linewidth=2, marker='o', markersize=7, markerfacecolor='violet')
+    for i in range(len(moods)):
+        ax.plot(dates[i], moods[i], marker='o', markersize=10, color=colors.get(moods[i], 'gray'))
+        ax.text(dates[i], moods[i]+0.15, mood_labels[moods[i]], ha='center', fontsize=14)
 
     ax.set_ylim(0.5, 7.5)
     ax.set_yticks(range(1, 8))
-    ax.set_yticklabels([mood_labels[i] for i in range(1, 8)], fontsize=14)
-
-    ax.set_title("📈 Настроение по дням", fontsize=16, color='purple', pad=15)
+    ax.set_yticklabels([mood_labels[i] for i in range(1, 8)], fontsize=13)
+    ax.set_title("📈 Все отмеченные настроения", fontsize=16, color='purple', pad=15)
     ax.set_xlabel("Дата", fontsize=12)
     ax.set_ylabel("Настроение", fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.4)
 
-    ax.grid(True, linestyle='--', alpha=0.5)
     plt.xticks(rotation=45)
     plt.tight_layout()
 
+    # 📊 Подпись среднего настроения
+    avg = sum(moods) / len(moods)
+    avg_mood = round(avg, 2)
+    mood_emoji = mood_labels[round(avg)] if round(avg) in mood_labels else "❓"
+    ax.text(0.5, -0.2, f"Среднее настроение: {avg_mood} {mood_emoji}", fontsize=12,
+            color='gray', ha='center', transform=ax.transAxes)
+
+    # 📤 Отправка
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
