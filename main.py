@@ -124,6 +124,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message.text
     user_id = update.effective_user.id
 
+    # ⛔️ Проверка: если это группа и бот не был упомянут — выходим
+    if update.message.chat.type != "private" and not message.lower().startswith(f"@{context.bot.username.lower()}"):
+        return
+
     if message[0].isdigit():
         mood_value = int(message[0])
         cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (
@@ -144,7 +148,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(responses[mood_value])
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
-
 # 📊 Общая функция построения графика (обновлённая)
 async def send_mood_graph(update: Update, days: int = None):
     user_id = update.effective_user.id
