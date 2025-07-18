@@ -121,10 +121,18 @@ async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 💬 обработка настроения
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message.text
-    user_id = update.effective_user.id
+    message = update.message.text.strip()
+    user_id = update.message.from_user.id
 
-    if message[0].isdigit():
+    # 🔇 Игнорировать сообщения в группах, если бот не упомянут
+    if update.message.chat.type != "private" and not message.lower().startswith(f"@{context.bot.username.lower()}"):
+        return
+
+    # 🎯 Убрать @BotName в начале, если есть
+    if message.lower().startswith(f"@{context.bot.username.lower()}"):
+        message = message[len(f"@{context.bot.username.lower()}"):].strip()
+
+    if message and message[0].isdigit():
         mood_value = int(message[0])
         cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (
             user_id, mood_value, datetime.now().strftime("%Y-%m-%d")
@@ -141,10 +149,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             7: "🤩 Ура! Такое настроение вдохновляет! ⭐"
         }
 
-        await update.message.reply_text(responses[mood_value])
+        if mood_value in responses:
+            await update.message.reply_text(responses[mood_value])
+        else:
+            await update.message.reply_text("Пожалуйста, выбери настроение от 1 до 7 😊")
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
-
 # 📊 Общая функция построения графика (обновлённая)
 async def send_mood_graph(update: Update, days: int = None):
     user_id = update.effective_user.id
