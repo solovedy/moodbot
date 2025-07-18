@@ -11,9 +11,7 @@ from flask import Flask
 from threading import Thread
 
 from telegram import Update, ReplyKeyboardMarkup, InputFile
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 )
 
 # 📌 Настройка переменных
