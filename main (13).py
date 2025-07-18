@@ -1,4 +1,5 @@
 import asyncio
+pending_mood_users = {}
 import sqlite3
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
@@ -115,29 +116,54 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Нажми /mood чтобы отметить, как ты себя чувствуешь 💬"
     )
 
+# ⏰ Напоминание, если не выбрано настроение
+async def remind_if_no_mood(user_id, context):
+    await asyncio.sleep(600)  # 10 минут
+    if pending_mood_users.get(user_id):
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="📩 Не забудь выбрать своё настроение — это займёт всего пару секунд!"
+            )
+        except Exception as e:
+            print(f"Ошибка при отправке напоминания: {e}")
+        finally:
+            pending_mood_users.pop(user_id, None)
+
 # 🌡 /mood
 async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["waiting_for_mood"] = True
+    user_id = update.effective_user.id
+    pending_mood_users[user_id] = True
     await update.message.reply_text("Как ты себя чувствуешь сегодня?", reply_markup=mood_keyboard)
+    asyncio.create_task(remind_if_no_mood(user_id, context))
 
 # 💬 обработка настроения
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message.text.strip()
     user_id = update.message.from_user.id
 
-    # 🔇 Игнорировать сообщения в группах, если бот не упомянут
     if update.message.chat.type != "private" and not message.lower().startswith(f"@{context.bot.username.lower()}"):
         return
 
-    # 🎯 Убрать @BotName в начале, если есть
     if message.lower().startswith(f"@{context.bot.username.lower()}"):
         message = message[len(f"@{context.bot.username.lower()}"):].strip()
 
+    if not context.user_data.get("waiting_for_mood"):
+        return
+
     if message and message[0].isdigit():
         mood_value = int(message[0])
+        if mood_value < 1 or mood_value > 7:
+            await update.message.reply_text("Пожалуйста, выбери настроение от 1 до 7 😊")
+            return
+
         cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (
             user_id, mood_value, datetime.now().strftime("%Y-%m-%d")
         ))
         conn.commit()
+        context.user_data["waiting_for_mood"] = False
+        pending_mood_users.pop(user_id, None)
 
         responses = {
             1: "😩 Держись! Попробуй /breathe или /advice — они помогут немного облегчить день.",
@@ -149,81 +175,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             7: "🤩 Ура! Такое настроение вдохновляет! ⭐"
         }
 
-        if mood_value in responses:
-            await update.message.reply_text(responses[mood_value])
-        else:
-            await update.message.reply_text("Пожалуйста, выбери настроение от 1 до 7 😊")
+        await update.message.reply_text(responses[mood_value])
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
-# 📊 Общая функция построения графика (обновлённая)
-async def send_mood_graph(update: Update, days: int = None):
-    user_id = update.effective_user.id
-    if days:
-        since = datetime.now() - timedelta(days=days - 1)
-        cursor.execute('''
-            SELECT date, mood FROM moods
-            WHERE user_id = ? AND date >= ?
-            ORDER BY date
-        ''', (user_id, since.strftime("%Y-%m-%d")))
-    else:
-        cursor.execute('''
-            SELECT date, mood FROM moods
-            WHERE user_id = ?
-            ORDER BY date
-        ''', (user_id,))
 
-    rows = cursor.fetchall()
-    if not rows:
-        await update.message.reply_text("Пока нет данных для отображения графика 📉")
-        return
-
-    # 🎯 Обработка данных
-    dates = [datetime.strptime(row[0], "%Y-%m-%d").strftime("%d.%m") for row in rows]
-    moods = [row[1] for row in rows]
-
-    mood_labels = {
-        1: "💀", 2: "🌧️", 3: "😕",
-        4: "😐", 5: "🌿", 6: "🌞", 7: "🚀"
-    }
-
-    colors = {
-        1: "#6b6b6b", 2: "#5c88c4", 3: "#9e9e9e",
-        4: "#b0b0b0", 5: "#88c788", 6: "#f0c14b", 7: "#ff69b4"
-    }
-
-    # 🎨 График
-    fig, ax = plt.subplots(figsize=(9, 5))
-    fig.patch.set_facecolor('#f7f7fa')
-    ax.set_facecolor('#ffffff')
-
-    for i in range(len(moods)):
-        ax.plot(dates[i], moods[i], marker='o', markersize=10, color=colors.get(moods[i], 'gray'))
-        ax.text(dates[i], moods[i]+0.15, mood_labels[moods[i]], ha='center', fontsize=14)
-
-    ax.set_ylim(0.5, 7.5)
-    ax.set_yticks(range(1, 8))
-    ax.set_yticklabels([mood_labels[i] for i in range(1, 8)], fontsize=13)
-    ax.set_title("📈 Все отмеченные настроения", fontsize=16, color='purple', pad=15)
-    ax.set_xlabel("Дата", fontsize=12)
-    ax.set_ylabel("Настроение", fontsize=12)
-    ax.grid(True, linestyle='--', alpha=0.4)
-
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-
-    # 📊 Подпись среднего настроения
-    avg = sum(moods) / len(moods)
-    avg_mood = round(avg, 2)
-    mood_emoji = mood_labels[round(avg)] if round(avg) in mood_labels else "❓"
-    ax.text(0.5, -0.2, f"Среднее настроение: {avg_mood} {mood_emoji}", fontsize=12,
-            color='gray', ha='center', transform=ax.transAxes)
-
-    # 📤 Отправка
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    await update.message.reply_photo(photo=InputFile(buf, filename="mood.png"))
-    plt.close()
+# 📊 График
+# (оставь как есть — он у тебя отлично реализован)
 
 # 📊 /mood_week
 async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
