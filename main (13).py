@@ -190,6 +190,7 @@ async def send_mood_graph(update: Update, days: int = None):
         await update.message.reply_text("Нет данных для построения графика 😕")
         return
 
+    # Подготовка данных
     data = {}
     for date_str, mood in rows:
         data[date_str] = mood
@@ -197,7 +198,7 @@ async def send_mood_graph(update: Update, days: int = None):
     dates = sorted(data.keys())
     moods = [data[date] for date in dates]
 
-  # Цвета и подписи
+    # Цвета и подписи
     mood_colors = {
         1: "#4B0082", 2: "#8A2BE2", 3: "#1E90FF", 4: "#32CD32",
         5: "#FFD700", 6: "#FFA500", 7: "#FF4500"
@@ -209,6 +210,7 @@ async def send_mood_graph(update: Update, days: int = None):
 
     colors = [mood_colors[m] for m in moods]
 
+    # Построение графика
     plt.figure(figsize=(10, 6))
     plt.plot(dates, moods, marker='o', linewidth=2.5, color='#2F4F4F', alpha=0.6, zorder=1)
     plt.scatter(dates, moods, c=colors, s=150, edgecolors='black', zorder=2)
@@ -220,14 +222,20 @@ async def send_mood_graph(update: Update, days: int = None):
     plt.yticks(range(1, 8), [mood_labels[i] for i in range(1, 8)])
     plt.ylim(0.5, 7.5)
     plt.grid(True, linestyle='--', alpha=0.5)
-    plt.tight_layout() 
+    plt.tight_layout()
 
+    # Сохранение графика в буфер
     buf = BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
     plt.close()
 
-    await update.message.reply_photo(photo=InputFile(buf, filename="mood.png"))
+    # Среднее настроение
+    avg_mood = sum(moods) / len(moods)
+    avg_mood_text = f"Среднее настроение за период: {avg_mood:.2f} 🧠"
+
+    # Отправка графика и средней оценки
+    await update.message.reply_photo(photo=InputFile(buf, filename="mood.png"), caption=avg_mood_text)
 
 # 📈 Команды
 async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
