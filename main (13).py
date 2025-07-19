@@ -197,15 +197,30 @@ async def send_mood_graph(update: Update, days: int = None):
     dates = sorted(data.keys())
     moods = [data[date] for date in dates]
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(dates, moods, marker='o', linestyle='-', color='skyblue')
-    plt.title("Настроение по дням")
-    plt.xlabel("Дата")
-    plt.ylabel("Настроение (1–7)")
+  # Цвета и подписи
+    mood_colors = {
+        1: "#4B0082", 2: "#8A2BE2", 3: "#1E90FF", 4: "#32CD32",
+        5: "#FFD700", 6: "#FFA500", 7: "#FF4500"
+    }
+    mood_labels = {
+        1: "1 💀", 2: "2 🌧️", 3: "3 😕", 4: "4 😐",
+        5: "5 🌿", 6: "6 🌞", 7: "7 🚀"
+    }
+
+    colors = [mood_colors[m] for m in moods]
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(dates, moods, marker='o', linewidth=2.5, color='#2F4F4F', alpha=0.6, zorder=1)
+    plt.scatter(dates, moods, c=colors, s=150, edgecolors='black', zorder=2)
+
+    plt.title("📊 Настроение за период", fontsize=16, weight='bold')
+    plt.xlabel("Дата", fontsize=12)
+    plt.ylabel("Уровень настроения", fontsize=12)
     plt.xticks(rotation=45)
-    plt.ylim(1, 7)
-    plt.grid(True)
-    plt.tight_layout()
+    plt.yticks(range(1, 8), [mood_labels[i] for i in range(1, 8)])
+    plt.ylim(0.5, 7.5)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout() 
 
     buf = BytesIO()
     plt.savefig(buf, format='png')
