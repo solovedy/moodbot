@@ -1,6 +1,6 @@
 import asyncio
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta  # ✅ исправлено
 import matplotlib.pyplot as plt
 import os
 import requests
@@ -9,7 +9,7 @@ from io import BytesIO
 from flask import Flask
 import threading
 
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InputFile  # ✅ добавлен InputFile
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
