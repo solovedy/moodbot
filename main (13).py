@@ -1,22 +1,21 @@
 import asyncio
-pending_mood_users = {}
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 import matplotlib.pyplot as plt
 import os
 import requests
 from io import BytesIO
 
 from flask import Flask
-from threading import Thread
+import threading
 
-from telegram import Update, ReplyKeyboardMarkup, InputFile
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     filters,
-    ContextTypes  # <-- это важно!
+    ContextTypes
 )
 
 # 📌 Настройка переменных
@@ -119,9 +118,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Нажми /mood чтобы отметить, как ты себя чувствуешь 💬"
     )
 
-# ⏰ Напоминание, если не выбрано настроение
+# ⏰ Напоминание
+pending_mood_users = {}
+
 async def remind_if_no_mood(user_id, context):
-    await asyncio.sleep(600)  # 10 минут
+    await asyncio.sleep(600)
     if pending_mood_users.get(user_id):
         try:
             await context.bot.send_message(
@@ -141,97 +142,121 @@ async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Как ты себя чувствуешь сегодня?", reply_markup=mood_keyboard)
     asyncio.create_task(remind_if_no_mood(user_id, context))
 
-# 💬 обработка настроения
+# 💬 Обработка сообщения
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message.text.strip()
-    user_id = update.message.from_user.id
-
-    if update.message.chat.type != "private" and not message.lower().startswith(f"@{context.bot.username.lower()}"):
-        return
-
-    if message.lower().startswith(f"@{context.bot.username.lower()}"):
-        message = message[len(f"@{context.bot.username.lower()}"):].strip()
+    user_id = update.effective_user.id
 
     if not context.user_data.get("waiting_for_mood"):
         return
 
     if message and message[0].isdigit():
         mood_value = int(message[0])
-        if mood_value < 1 or mood_value > 7:
+        if 1 <= mood_value <= 7:
+            cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (
+                user_id, mood_value, datetime.now().strftime("%Y-%m-%d")
+            ))
+            conn.commit()
+            context.user_data["waiting_for_mood"] = False
+            pending_mood_users.pop(user_id, None)
+
+            responses = {
+                1: "😩 Держись! Попробуй /breathe или /advice — они помогут немного облегчить день.",
+                2: "😣 Это пройдёт. Попробуй /motivate или /breathe — тебе станет легче!",
+                3: "😕 Надеюсь, день станет лучше. Загляни в /joke для улыбки.",
+                4: "🙂 Неплохо! Продолжай в том же духе.",
+                5: "😌 Спокойствие — это круто. Наслаждайся моментом!",
+                6: "😀 Отлично! Заряжай позитивом других!",
+                7: "🤩 Ура! Такое настроение вдохновляет! ⭐"
+            }
+
+            await update.message.reply_text(responses[mood_value])
+        else:
             await update.message.reply_text("Пожалуйста, выбери настроение от 1 до 7 😊")
-            return
-
-        cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (
-            user_id, mood_value, datetime.now().strftime("%Y-%m-%d")
-        ))
-        conn.commit()
-        context.user_data["waiting_for_mood"] = False
-        pending_mood_users.pop(user_id, None)
-
-        responses = {
-            1: "😩 Держись! Попробуй /breathe или /advice — они помогут немного облегчить день.",
-            2: "😣 Это пройдёт. Попробуй /motivate или /breathe — тебе станет легче!",
-            3: "😕 Надеюсь, день станет лучше. Загляни в /joke для улыбки.",
-            4: "🙂 Неплохо! Продолжай в том же духе.",
-            5: "😌 Спокойствие — это круто. Наслаждайся моментом!",
-            6: "😀 Отлично! Заряжай позитивом других!",
-            7: "🤩 Ура! Такое настроение вдохновляет! ⭐"
-        }
-
-        await update.message.reply_text(responses[mood_value])
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
 
-# 📊 График
-# (оставь как есть — он у тебя отлично реализован)
+# 📊 Построение и отправка графика настроения
+async def send_mood_graph(update: Update, days: int = None):
+    user_id = update.effective_user.id
+    if days:
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cursor.execute("SELECT date, mood FROM moods WHERE user_id = ? AND date >= ?", (user_id, start_date))
+    else:
+        cursor.execute("SELECT date, mood FROM moods WHERE user_id = ?", (user_id,))
+    
+    rows = cursor.fetchall()
+    if not rows:
+        await update.message.reply_text("Нет данных для построения графика 😕")
+        return
 
-# 📊 /mood_week
+    data = {}
+    for date_str, mood in rows:
+        data[date_str] = mood
+
+    dates = sorted(data.keys())
+    moods = [data[date] for date in dates]
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(dates, moods, marker='o', linestyle='-', color='skyblue')
+    plt.title("Настроение по дням")
+    plt.xlabel("Дата")
+    plt.ylabel("Настроение (1–7)")
+    plt.xticks(rotation=45)
+    plt.ylim(1, 7)
+    plt.grid(True)
+    plt.tight_layout()
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    await update.message.reply_photo(photo=InputFile(buf, filename="mood.png"))
+
+# 📈 Команды
 async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_mood_graph(update, days=7)
 
-# 📊 /mood_month
 async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_mood_graph(update, days=30)
 
-# 📊 /mood_all
 async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update)
+    await send_mood_graph(update, days=None)
 
-# 🌐 Flask-сервер для UptimeRobot
-app_flask = Flask('')
+# 🌐 Flask для Replit + UptimeRobot
+app = Flask(__name__)
 
-@app_flask.route('/')
+@app.route('/')
 def home():
-    return "I'm alive! 🤖"
+    return "Я жив! ✅"
 
-def run():
-    app_flask.run(host='0.0.0.0', port=8080)
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
 
 # 🚀 Запуск
 async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("mood", mood))
-    app.add_handler(CommandHandler("mood_week", mood_week))
-    app.add_handler(CommandHandler("mood_month", mood_month))
-    app.add_handler(CommandHandler("mood_all", mood_all))
-    app.add_handler(CommandHandler("setcity", set_city))
-    app.add_handler(CommandHandler("mycity", my_city))
-    app.add_handler(CommandHandler("weather", weather))
-
-   
-    # 🧾 Обработка текстовых сообщений от 1 до 7
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(CommandHandler("help", help_command))
+    bot_app.add_handler(CommandHandler("mood", mood))
+    bot_app.add_handler(CommandHandler("mood_week", mood_week))
+    bot_app.add_handler(CommandHandler("mood_month", mood_month))
+    bot_app.add_handler(CommandHandler("mood_all", mood_all))
+    bot_app.add_handler(CommandHandler("setcity", set_city))
+    bot_app.add_handler(CommandHandler("mycity", my_city))
+    bot_app.add_handler(CommandHandler("weather", weather))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Бот запущен! ✅")
-    await app.run_polling()
+    await bot_app.run_polling()
 
 if __name__ == "__main__":
     import nest_asyncio
     nest_asyncio.apply()
-    Thread(target=run).start()
+
+    threading.Thread(target=run_flask).start()
 
     try:
         asyncio.run(main())
