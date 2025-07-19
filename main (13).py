@@ -263,6 +263,14 @@ def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
 # 🚀 Основной запуск
+async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update, days=7)
+
+async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update, days=30)
+
+async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update)
 async def main():
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
