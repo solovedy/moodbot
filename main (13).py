@@ -190,7 +190,6 @@ async def send_mood_graph(update: Update, days: int = None):
         await update.message.reply_text("Нет данных для построения графика 😕")
         return
 
-    # Подготовка данных
     data = {}
     for date_str, mood in rows:
         data[date_str] = mood
@@ -198,7 +197,7 @@ async def send_mood_graph(update: Update, days: int = None):
     dates = sorted(data.keys())
     moods = [data[date] for date in dates]
 
-    # Цвета и подписи
+    # 🌈 Цвета и подписи
     mood_colors = {
         1: "#4B0082", 2: "#8A2BE2", 3: "#1E90FF", 4: "#32CD32",
         5: "#FFD700", 6: "#FFA500", 7: "#FF4500"
@@ -207,35 +206,44 @@ async def send_mood_graph(update: Update, days: int = None):
         1: "1 💀", 2: "2 🌧️", 3: "3 😕", 4: "4 😐",
         5: "5 🌿", 6: "6 🌞", 7: "7 🚀"
     }
-
     colors = [mood_colors[m] for m in moods]
+    labels = [mood_labels[m] for m in moods]
 
-    # Построение графика
-    plt.figure(figsize=(10, 6))
+    plt.style.use('seaborn-darkgrid')
+    plt.figure(figsize=(12, 6))
+    ax = plt.gca()
+    ax.set_facecolor("#F5F5F5")
+
+    # Линия и точки
     plt.plot(dates, moods, marker='o', linewidth=2.5, color='#2F4F4F', alpha=0.6, zorder=1)
-    plt.scatter(dates, moods, c=colors, s=150, edgecolors='black', zorder=2)
+    plt.scatter(dates, moods, c=colors, s=250, edgecolors='black', linewidths=1.2, zorder=2)
 
-    plt.title("📊 Настроение за период", fontsize=16, weight='bold')
+    # ✏️ Подписи над точками
+    for i, (x, y) in enumerate(zip(dates, moods)):
+        plt.text(x, y + 0.25, labels[i], fontsize=11, ha='center', va='bottom', weight='bold')
+
+    # 🧮 Среднее настроение
+    average_mood = sum(moods) / len(moods)
+    plt.axhline(average_mood, color='gray', linestyle='--', linewidth=1)
+    plt.text(dates[-1], average_mood + 0.2, f"Среднее: {average_mood:.2f}", fontsize=10, ha='right', color='gray')
+
+    # Оформление
+    plt.title("📊 Твой график настроения", fontsize=18, weight='bold')
     plt.xlabel("Дата", fontsize=12)
-    plt.ylabel("Уровень настроения", fontsize=12)
-    plt.xticks(rotation=45)
-    plt.yticks(range(1, 8), [mood_labels[i] for i in range(1, 8)])
-    plt.ylim(0.5, 7.5)
-    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.ylabel("Уровень", fontsize=12)
+    plt.xticks(rotation=45, fontsize=10)
+    plt.yticks(range(1, 8), [mood_labels[i] for i in range(1, 8)], fontsize=10)
+    plt.ylim(0.5, 7.8)
+    plt.grid(True, linestyle='--', alpha=0.4)
     plt.tight_layout()
 
-    # Сохранение графика в буфер
+    # Отправка
     buf = BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
     plt.close()
 
-    # Среднее настроение
-    avg_mood = sum(moods) / len(moods)
-    avg_mood_text = f"Среднее настроение за период: {avg_mood:.2f} 🧠"
-
-    # Отправка графика и средней оценки
-    await update.message.reply_photo(photo=InputFile(buf, filename="mood.png"), caption=avg_mood_text)
+    await update.message.reply_photo(photo=InputFile(buf, filename="mood_chart.png"))
 
 # 📈 Команды
 async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
