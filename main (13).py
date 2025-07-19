@@ -1,6 +1,6 @@
 import asyncio
 import sqlite3
-from datetime import datetime, timedelta  # ✅ исправлено
+from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import os
 import requests
@@ -9,7 +9,12 @@ from io import BytesIO
 from flask import Flask
 import threading
 
-from telegram import Update, ReplyKeyboardMarkup, InputFile  # ✅ добавлен InputFile
+from telegram import Update, ReplyKeyboardMarkup
+try:
+    from telegram import InputFile
+except ImportError:
+    from telegram.inputfile import InputFile  # на случай, если другая версия
+
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -64,17 +69,6 @@ def get_weather(city: str) -> str:
     emoji = "☀️" if "clear" in data['weather'][0]['main'].lower() else "🌥️"
     return f"{emoji} В {city} сейчас {temp}°C, ощущается как {feels_like}°C. {description}."
 
-# 🌤 /weather
-async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    cursor.execute("SELECT city FROM cities WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        await update.message.reply_text("Сначала укажи свой город с помощью /setcity 🌍")
-        return
-    city = row[0]
-    await update.message.reply_text(get_weather(city))
-
 # 📍 /setcity
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -95,6 +89,17 @@ async def my_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Твой город: {row[0]} 🏙️")
     else:
         await update.message.reply_text("Ты ещё не указал город. Используй /setcity [город]")
+
+# 🌤 /weather
+async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cursor.execute("SELECT city FROM cities WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        await update.message.reply_text("Сначала укажи свой город с помощью /setcity 🌍")
+        return
+    city = row[0]
+    await update.message.reply_text(get_weather(city))
 
 # 🆘 /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -142,7 +147,7 @@ async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Как ты себя чувствуешь сегодня?", reply_markup=mood_keyboard)
     asyncio.create_task(remind_if_no_mood(user_id, context))
 
-# 💬 Обработка сообщения
+# 💬 Обработка настроения
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message.text.strip()
     user_id = update.effective_user.id
@@ -176,7 +181,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
 
-# 📊 Построение и отправка графика настроения
+# 📊 Построение графика
 async def send_mood_graph(update: Update, days: int = None):
     user_id = update.effective_user.id
     if days:
@@ -197,7 +202,6 @@ async def send_mood_graph(update: Update, days: int = None):
     dates = sorted(data.keys())
     moods = [data[date] for date in dates]
 
-    # 🌈 Цвета и подписи
     mood_colors = {
         1: "#4B0082", 2: "#8A2BE2", 3: "#1E90FF", 4: "#32CD32",
         5: "#FFD700", 6: "#FFA500", 7: "#FF4500"
@@ -214,20 +218,16 @@ async def send_mood_graph(update: Update, days: int = None):
     ax = plt.gca()
     ax.set_facecolor("#F5F5F5")
 
-    # Линия и точки
     plt.plot(dates, moods, marker='o', linewidth=2.5, color='#2F4F4F', alpha=0.6, zorder=1)
     plt.scatter(dates, moods, c=colors, s=250, edgecolors='black', linewidths=1.2, zorder=2)
 
-    # ✏️ Подписи над точками
     for i, (x, y) in enumerate(zip(dates, moods)):
         plt.text(x, y + 0.25, labels[i], fontsize=11, ha='center', va='bottom', weight='bold')
 
-    # 🧮 Среднее настроение
     average_mood = sum(moods) / len(moods)
     plt.axhline(average_mood, color='gray', linestyle='--', linewidth=1)
     plt.text(dates[-1], average_mood + 0.2, f"Среднее: {average_mood:.2f}", fontsize=10, ha='right', color='gray')
 
-    # Оформление
     plt.title("📊 Твой график настроения", fontsize=18, weight='bold')
     plt.xlabel("Дата", fontsize=12)
     plt.ylabel("Уровень", fontsize=12)
@@ -237,7 +237,6 @@ async def send_mood_graph(update: Update, days: int = None):
     plt.grid(True, linestyle='--', alpha=0.4)
     plt.tight_layout()
 
-    # Отправка
     buf = BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
@@ -245,7 +244,7 @@ async def send_mood_graph(update: Update, days: int = None):
 
     await update.message.reply_photo(photo=InputFile(buf, filename="mood_chart.png"))
 
-# 📈 Команды
+# 📈 Команды графиков
 async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_mood_graph(update, days=7)
 
@@ -253,19 +252,19 @@ async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_mood_graph(update, days=30)
 
 async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update, days=None)
+    await send_mood_graph(update)
 
-# 🌐 Flask для Replit + UptimeRobot
+# 🌐 Flask
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Я жив! ✅"
+    return "Бот работает! ✅"
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
-# 🚀 Запуск
+# 🚀 Основной запуск
 async def main():
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -280,7 +279,7 @@ async def main():
     bot_app.add_handler(CommandHandler("weather", weather))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Бот запущен! ✅")
+    print("Бот запущен ✅")
     await bot_app.run_polling()
 
 if __name__ == "__main__":
@@ -292,7 +291,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except RuntimeError as e:
-        if str(e).startswith("This event loop is already running"):
+        if "already running" in str(e):
             loop = asyncio.get_event_loop()
             loop.create_task(main())
             loop.run_forever()
