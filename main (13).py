@@ -195,24 +195,25 @@ async def send_mood_graph(update: Update, days: int = None):
         await update.message.reply_text("Нет данных для построения графика 😕")
         return
 
-    data = {}
+    # Группируем данные по дате и считаем среднее настроение на день
+    mood_by_date = {}
     for date_str, mood in rows:
-        data[date_str] = mood
+        if date_str not in mood_by_date:
+            mood_by_date[date_str] = []
+        mood_by_date[date_str].append(mood)
 
-    dates = sorted(data.keys())
-    moods = [data[date] for date in dates]
+    dates = sorted(mood_by_date.keys())
+    moods = [sum(mood_by_date[date]) / len(mood_by_date[date]) for date in dates]
 
     # 🌈 Цвета и подписи
     mood_colors = {
         1: "#4B0082", 2: "#8A2BE2", 3: "#1E90FF", 4: "#32CD32",
         5: "#FFD700", 6: "#FFA500", 7: "#FF4500"
     }
-    mood_labels = {
-        1: "1 💀", 2: "2 🌧️", 3: "3 😕", 4: "4 😐",
-        5: "5 🌿", 6: "6 🌞", 7: "7 🚀"
-    }
-    colors = [mood_colors[m] for m in moods]
-    labels = [mood_labels[m] for m in moods]
+
+    # Генерация цветов по округлённому значению настроения
+    colors = [mood_colors[round(m)] for m in moods]
+    labels = [f"{round(m)}" for m in moods]
 
     # ✅ Безопасный стиль
     plt.style.use('ggplot')
@@ -238,7 +239,7 @@ async def send_mood_graph(update: Update, days: int = None):
     plt.xlabel("Дата", fontsize=12)
     plt.ylabel("Уровень", fontsize=12)
     plt.xticks(rotation=45, fontsize=10)
-    plt.yticks(range(1, 8), [mood_labels[i] for i in range(1, 8)], fontsize=10)
+    plt.yticks(range(1, 8), [f"{i}" for i in range(1, 8)], fontsize=10)
     plt.ylim(0.5, 7.8)
     plt.grid(True, linestyle='--', alpha=0.4)
     plt.tight_layout()
@@ -250,16 +251,6 @@ async def send_mood_graph(update: Update, days: int = None):
     plt.close()
 
     await update.message.reply_photo(photo=InputFile(buf, filename="mood_chart.png"))
-
-# 📈 Команды графиков
-async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update, days=7)
-
-async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update, days=30)
-
-async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update)
 
 # 🌐 Flask
 app = Flask(__name__)
