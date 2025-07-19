@@ -181,7 +181,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
 
-# 📊 Построение графика
+# 📊 Построение и отправка графика настроения
 async def send_mood_graph(update: Update, days: int = None):
     user_id = update.effective_user.id
     if days:
@@ -202,6 +202,7 @@ async def send_mood_graph(update: Update, days: int = None):
     dates = sorted(data.keys())
     moods = [data[date] for date in dates]
 
+    # 🌈 Цвета и подписи
     mood_colors = {
         1: "#4B0082", 2: "#8A2BE2", 3: "#1E90FF", 4: "#32CD32",
         5: "#FFD700", 6: "#FFA500", 7: "#FF4500"
@@ -213,21 +214,26 @@ async def send_mood_graph(update: Update, days: int = None):
     colors = [mood_colors[m] for m in moods]
     labels = [mood_labels[m] for m in moods]
 
-    plt.style.use('seaborn-darkgrid')
+    # ✅ Безопасный стиль
+    plt.style.use('ggplot')
     plt.figure(figsize=(12, 6))
     ax = plt.gca()
     ax.set_facecolor("#F5F5F5")
 
+    # Линия и точки
     plt.plot(dates, moods, marker='o', linewidth=2.5, color='#2F4F4F', alpha=0.6, zorder=1)
     plt.scatter(dates, moods, c=colors, s=250, edgecolors='black', linewidths=1.2, zorder=2)
 
+    # ✏️ Подписи над точками
     for i, (x, y) in enumerate(zip(dates, moods)):
         plt.text(x, y + 0.25, labels[i], fontsize=11, ha='center', va='bottom', weight='bold')
 
+    # 🧮 Среднее настроение
     average_mood = sum(moods) / len(moods)
     plt.axhline(average_mood, color='gray', linestyle='--', linewidth=1)
     plt.text(dates[-1], average_mood + 0.2, f"Среднее: {average_mood:.2f}", fontsize=10, ha='right', color='gray')
 
+    # Оформление
     plt.title("📊 Твой график настроения", fontsize=18, weight='bold')
     plt.xlabel("Дата", fontsize=12)
     plt.ylabel("Уровень", fontsize=12)
@@ -237,6 +243,7 @@ async def send_mood_graph(update: Update, days: int = None):
     plt.grid(True, linestyle='--', alpha=0.4)
     plt.tight_layout()
 
+    # Отправка
     buf = BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
