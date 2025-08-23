@@ -6,17 +6,11 @@ import os
 import requests
 from io import BytesIO
 
-from flask import Flask
-import threading
+from flask import Flask, request
 
-from telegram import Update, ReplyKeyboardMarkup
-try:
-    from telegram import InputFile
-except ImportError:
-    from telegram.inputfile import InputFile  # на случай, если другая версия
-
+from telegram import Update, ReplyKeyboardMarkup, InputFile
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     MessageHandler,
     filters,
@@ -26,6 +20,7 @@ from telegram.ext import (
 # 📌 Настройка переменных
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEATHER_TOKEN = os.environ.get("WEATHER_API_KEY")
+URL = os.environ.get("APP_URL")  # 👉 добавь в Replit Secrets APP_URL = твой URL
 
 # 🛠️ База данных
 conn = sqlite3.connect("mood.db", check_same_thread=False)
@@ -166,8 +161,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_mood_users.pop(user_id, None)
 
             responses = {
-                1: "😩 Держись! Попробуй /breathe или /advice — они помогут немного облегчить день.",
-                2: "😣 Это пройдёт. Попробуй /motivate или /breathe — тебе станет легче!",
+                1: "😩 Держись! Попробуй /breathe или /advice.",
+                2: "😣 Это пройдёт. Попробуй /motivate или /breathe!",
                 3: "😕 Надеюсь, день станет лучше. Загляни в /joke для улыбки.",
                 4: "🙂 Неплохо! Продолжай в том же духе.",
                 5: "😌 Спокойствие — это круто. Наслаждайся моментом!",
@@ -195,7 +190,6 @@ async def send_mood_graph(update: Update, days: int = None):
         await update.message.reply_text("Нет данных для построения графика 😕")
         return
 
-    # Группируем данные по дате и считаем среднее настроение на день
     mood_by_date = {}
     for date_str, mood in rows:
         if date_str not in mood_by_date:
@@ -205,46 +199,21 @@ async def send_mood_graph(update: Update, days: int = None):
     dates = sorted(mood_by_date.keys())
     moods = [sum(mood_by_date[date]) / len(mood_by_date[date]) for date in dates]
 
-    # 🌈 Цвета и подписи
-    mood_colors = {
-        1: "#4B0082", 2: "#8A2BE2", 3: "#1E90FF", 4: "#32CD32",
-        5: "#FFD700", 6: "#FFA500", 7: "#FF4500"
-    }
-
-    # Генерация цветов по округлённому значению настроения
-    colors = [mood_colors[round(m)] for m in moods]
-    labels = [f"{round(m)}" for m in moods]
-
-    # ✅ Безопасный стиль
     plt.style.use('ggplot')
     plt.figure(figsize=(12, 6))
-    ax = plt.gca()
-    ax.set_facecolor("#F5F5F5")
+    plt.plot(dates, moods, marker='o', color='#2F4F4F')
 
-    # Линия и точки
-    plt.plot(dates, moods, marker='o', linewidth=2.5, color='#2F4F4F', alpha=0.6, zorder=1)
-    plt.scatter(dates, moods, c=colors, s=250, edgecolors='black', linewidths=1.2, zorder=2)
-
-    # ✏️ Подписи над точками
-    for i, (x, y) in enumerate(zip(dates, moods)):
-        plt.text(x, y + 0.25, labels[i], fontsize=11, ha='center', va='bottom', weight='bold')
-
-    # 🧮 Среднее настроение
     average_mood = sum(moods) / len(moods)
-    plt.axhline(average_mood, color='gray', linestyle='--', linewidth=1)
-    plt.text(dates[-1], average_mood + 0.2, f"Среднее: {average_mood:.2f}", fontsize=10, ha='right', color='gray')
+    plt.axhline(average_mood, color='gray', linestyle='--')
+    plt.text(dates[-1], average_mood + 0.2, f"Среднее: {average_mood:.2f}", fontsize=10)
 
-    # Оформление
-    plt.title("📊 Твой график настроения", fontsize=18, weight='bold')
-    plt.xlabel("Дата", fontsize=12)
-    plt.ylabel("Уровень", fontsize=12)
-    plt.xticks(rotation=45, fontsize=10)
-    plt.yticks(range(1, 8), [f"{i}" for i in range(1, 8)], fontsize=10)
+    plt.title("📊 Твой график настроения")
+    plt.xlabel("Дата")
+    plt.ylabel("Уровень (1–7)")
     plt.ylim(0.5, 7.8)
-    plt.grid(True, linestyle='--', alpha=0.4)
+    plt.xticks(rotation=45)
     plt.tight_layout()
 
-    # Отправка
     buf = BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
@@ -252,54 +221,35 @@ async def send_mood_graph(update: Update, days: int = None):
 
     await update.message.reply_photo(photo=InputFile(buf, filename="mood_chart.png"))
 
-# 🌐 Flask
+# ===== Flask =====
 app = Flask(__name__)
+telegram_app = Application.builder().token(BOT_TOKEN).build()
 
-@app.route('/')
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("help", help_command))
+telegram_app.add_handler(CommandHandler("mood", mood))
+telegram_app.add_handler(CommandHandler("mood_week", lambda u, c: send_mood_graph(u, 7)))
+telegram_app.add_handler(CommandHandler("mood_month", lambda u, c: send_mood_graph(u, 30)))
+telegram_app.add_handler(CommandHandler("mood_all", lambda u, c: send_mood_graph(u)))
+telegram_app.add_handler(CommandHandler("setcity", set_city))
+telegram_app.add_handler(CommandHandler("mycity", my_city))
+telegram_app.add_handler(CommandHandler("weather", weather))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    telegram_app.update_queue.put_nowait(update)
+    return "ok", 200
+
+@app.route("/")
 def home():
-    return "Бот работает! ✅"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-# 🚀 Основной запуск
-async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update, days=7)
-
-async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update, days=30)
-
-async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_mood_graph(update)
-async def main():
-    bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(CommandHandler("help", help_command))
-    bot_app.add_handler(CommandHandler("mood", mood))
-    bot_app.add_handler(CommandHandler("mood_week", mood_week))
-    bot_app.add_handler(CommandHandler("mood_month", mood_month))
-    bot_app.add_handler(CommandHandler("mood_all", mood_all))
-    bot_app.add_handler(CommandHandler("setcity", set_city))
-    bot_app.add_handler(CommandHandler("mycity", my_city))
-    bot_app.add_handler(CommandHandler("weather", weather))
-    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    print("Бот запущен ✅")
-    await bot_app.run_polling()
+    return "Бот работает через вебхуки ✅"
 
 if __name__ == "__main__":
-    import nest_asyncio
-    nest_asyncio.apply()
-
-    threading.Thread(target=run_flask).start()
-
-    try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.create_task(main())
-            loop.run_forever()
-        else:
-            raise
+    telegram_app.run_webhook(
+        listen="0.0.0.0",
+        port=8080,
+        url_path=BOT_TOKEN,
+        webhook_url=f"{URL}/{BOT_TOKEN}"
+    )
