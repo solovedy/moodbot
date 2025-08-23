@@ -30,7 +30,6 @@ if not BOT_TOKEN or not URL:
     print("❗️Убедись, что в Secrets заданы BOT_TOKEN и APP_URL")
 
 # ================== База данных ==================
-# Один общий коннект (разрешаем использование из разных потоков)
 conn = sqlite3.connect("mood.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -238,7 +237,6 @@ async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = Flask(__name__)
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
-# Регистрируем хендлеры
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", help_command))
 telegram_app.add_handler(CommandHandler("mood", mood))
@@ -250,31 +248,31 @@ telegram_app.add_handler(CommandHandler("mycity", my_city))
 telegram_app.add_handler(CommandHandler("weather", weather))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Маршрут вебхука от Telegram
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    data = request.get_json(force=True)
+    print("== Пришёл апдейт:", data)  # 👈 лог в консоль
+    update = Update.de_json(data, telegram_app.bot)
     telegram_app.update_queue.put_nowait(update)
     return "ok", 200
 
-# Страница для аптайм-чекировщиков и превью
 @app.route("/")
 def home():
     return "Бот работает через вебхуки ✅"
 
 # ============== Запуск ==============
 if __name__ == "__main__":
-    # ВАЖНО: запускаем Application в фоне и ставим вебхук вручную
     async def _startup():
         await telegram_app.initialize()
         await telegram_app.start()
-        # Устанавливаем вебхук
-        await telegram_app.bot.set_webhook(f"{URL}/{BOT_TOKEN}")
+        resp = await telegram_app.bot.set_webhook(f"{URL}/{BOT_TOKEN}")
+        print("== setWebhook ответ:", resp)  # 👈 видно в консоли
+        info = await telegram_app.bot.get_webhook_info()
+        print("== getWebhookInfo:", info.to_dict())  # 👈 проверка текущего вебхука
 
     import nest_asyncio
     nest_asyncio.apply()
     loop = asyncio.get_event_loop()
     loop.run_until_complete(_startup())
 
-    # Запускаем Flask (он держит процесс активным)
     app.run(host="0.0.0.0", port=8080)
