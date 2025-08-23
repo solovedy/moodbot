@@ -1,10 +1,14 @@
+import os
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
-import os
 import requests
 from io import BytesIO
+
+# Matplotlib без GUI
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from flask import Flask, request
 
@@ -13,47 +17,53 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    ContextTypes,
     filters,
-    ContextTypes
 )
 
-# 📌 Настройка переменных
+# ================== Переменные окружения ==================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 WEATHER_TOKEN = os.environ.get("WEATHER_API_KEY")
-URL = os.environ.get("APP_URL")  # 👉 добавь в Replit Secrets APP_URL = твой URL
+URL = os.environ.get("APP_URL")  # пример: https://your-repl-name.username.repl.co  (без слеша на конце)
 
-# 🛠️ База данных
+if not BOT_TOKEN or not URL:
+    print("❗️Убедись, что в Secrets заданы BOT_TOKEN и APP_URL")
+
+# ================== База данных ==================
+# Один общий коннект (разрешаем использование из разных потоков)
 conn = sqlite3.connect("mood.db", check_same_thread=False)
 cursor = conn.cursor()
-cursor.execute('''
+cursor.execute("""
     CREATE TABLE IF NOT EXISTS moods (
         user_id INTEGER,
         mood INTEGER,
         date TEXT
     )
-''')
-cursor.execute('''
+""")
+cursor.execute("""
     CREATE TABLE IF NOT EXISTS cities (
         user_id INTEGER PRIMARY KEY,
         city TEXT
     )
-''')
+""")
 conn.commit()
 
-# 🧠 Подписи к настроениям
+# ================== Клавиатура настроений ==================
 mood_keyboard = ReplyKeyboardMarkup(
-    [[
-        "1 💀 Хочу исчезнуть", "2 🌧️ Всё валится из рук", "3 😕 День какой-то не такой"
-    ], [
-        "4 😐 Просто день", "5 🌿 Внутренний дзен", "6 🌞 На подъёме!", "7 🚀 Я лечу от счастья!"
-    ]],
+    [
+        ["1 💀 Хочу исчезнуть", "2 🌧️ Всё валится из рук", "3 😕 День какой-то не такой"],
+        ["4 😐 Просто день", "5 🌿 Внутренний дзен", "6 🌞 На подъёме!", "7 🚀 Я лечу от счастья!"],
+    ],
     resize_keyboard=True
 )
 
-# 🌤 Получение погоды
+# ================== Погода ==================
 def get_weather(city: str) -> str:
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_TOKEN}&units=metric&lang=ru"
-    response = requests.get(url)
+    try:
+        response = requests.get(url, timeout=10)
+    except Exception:
+        return "Не удалось получить погоду 😢"
     if response.status_code != 200:
         return "Не удалось получить погоду 😢"
 
@@ -61,10 +71,11 @@ def get_weather(city: str) -> str:
     temp = data['main']['temp']
     feels_like = data['main']['feels_like']
     description = data['weather'][0]['description'].capitalize()
-    emoji = "☀️" if "clear" in data['weather'][0]['main'].lower() else "🌥️"
+    main = data['weather'][0]['main'].lower()
+    emoji = "☀️" if ("clear" in main or "sun" in main) else "🌥️"
     return f"{emoji} В {city} сейчас {temp}°C, ощущается как {feels_like}°C. {description}."
 
-# 📍 /setcity
+# ================== Команды ==================
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Напиши так: /setcity [город], например: /setcity Алматы")
@@ -75,7 +86,6 @@ async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     await update.message.reply_text(f"Твой город сохранён: {city} ✅")
 
-# 📍 /mycity
 async def my_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     cursor.execute("SELECT city FROM cities WHERE user_id = ?", (user_id,))
@@ -85,7 +95,6 @@ async def my_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Ты ещё не указал город. Используй /setcity [город]")
 
-# 🌤 /weather
 async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     cursor.execute("SELECT city FROM cities WHERE user_id = ?", (user_id,))
@@ -96,7 +105,6 @@ async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
     city = row[0]
     await update.message.reply_text(get_weather(city))
 
-# 🆘 /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✨ Команды бота:\n"
@@ -111,14 +119,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help — список команд"
     )
 
-# 👋 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! 😊 Я помогу тебе отслеживать настроение и погоду.\n\n"
         "Нажми /mood чтобы отметить, как ты себя чувствуешь 💬"
     )
 
-# ⏰ Напоминание
+# ============== Напоминание ==============
 pending_mood_users = {}
 
 async def remind_if_no_mood(user_id, context):
@@ -134,7 +141,7 @@ async def remind_if_no_mood(user_id, context):
         finally:
             pending_mood_users.pop(user_id, None)
 
-# 🌡 /mood
+# ============== /mood и обработка выбора кнопкой ==============
 async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_for_mood"] = True
     user_id = update.effective_user.id
@@ -142,9 +149,8 @@ async def mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Как ты себя чувствуешь сегодня?", reply_markup=mood_keyboard)
     asyncio.create_task(remind_if_no_mood(user_id, context))
 
-# 💬 Обработка настроения
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message.text.strip()
+    message = (update.message.text or "").strip()
     user_id = update.effective_user.id
 
     if not context.user_data.get("waiting_for_mood"):
@@ -153,9 +159,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if message and message[0].isdigit():
         mood_value = int(message[0])
         if 1 <= mood_value <= 7:
-            cursor.execute("INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)", (
-                user_id, mood_value, datetime.now().strftime("%Y-%m-%d")
-            ))
+            cursor.execute(
+                "INSERT INTO moods (user_id, mood, date) VALUES (?, ?, ?)",
+                (user_id, mood_value, datetime.now().strftime("%Y-%m-%d"))
+            )
             conn.commit()
             context.user_data["waiting_for_mood"] = False
             pending_mood_users.pop(user_id, None)
@@ -169,35 +176,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 6: "😀 Отлично! Заряжай позитивом других!",
                 7: "🤩 Ура! Такое настроение вдохновляет! ⭐"
             }
-
             await update.message.reply_text(responses[mood_value])
         else:
             await update.message.reply_text("Пожалуйста, выбери настроение от 1 до 7 😊")
     else:
         await update.message.reply_text("Пожалуйста, выбери настроение с помощью кнопок 😊")
 
-# 📊 Построение и отправка графика настроения
-async def send_mood_graph(update: Update, days: int = None):
+# ============== Графики ==============
+async def send_mood_graph(update: Update, days: int | None = None):
     user_id = update.effective_user.id
     if days:
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         cursor.execute("SELECT date, mood FROM moods WHERE user_id = ? AND date >= ?", (user_id, start_date))
     else:
         cursor.execute("SELECT date, mood FROM moods WHERE user_id = ?", (user_id,))
-    
+
     rows = cursor.fetchall()
     if not rows:
         await update.message.reply_text("Нет данных для построения графика 😕")
         return
 
     mood_by_date = {}
-    for date_str, mood in rows:
-        if date_str not in mood_by_date:
-            mood_by_date[date_str] = []
-        mood_by_date[date_str].append(mood)
+    for date_str, mood_val in rows:
+        mood_by_date.setdefault(date_str, []).append(mood_val)
 
     dates = sorted(mood_by_date.keys())
-    moods = [sum(mood_by_date[date]) / len(mood_by_date[date]) for date in dates]
+    moods = [sum(mood_by_date[d]) / len(mood_by_date[d]) for d in dates]
 
     plt.style.use('ggplot')
     plt.figure(figsize=(12, 6))
@@ -221,35 +225,56 @@ async def send_mood_graph(update: Update, days: int = None):
 
     await update.message.reply_photo(photo=InputFile(buf, filename="mood_chart.png"))
 
-# ===== Flask =====
+async def mood_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update, days=7)
+
+async def mood_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update, days=30)
+
+async def mood_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_mood_graph(update)
+
+# ============== Flask + Telegram Application ==============
 app = Flask(__name__)
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
+# Регистрируем хендлеры
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", help_command))
 telegram_app.add_handler(CommandHandler("mood", mood))
-telegram_app.add_handler(CommandHandler("mood_week", lambda u, c: send_mood_graph(u, 7)))
-telegram_app.add_handler(CommandHandler("mood_month", lambda u, c: send_mood_graph(u, 30)))
-telegram_app.add_handler(CommandHandler("mood_all", lambda u, c: send_mood_graph(u)))
+telegram_app.add_handler(CommandHandler("mood_week", mood_week))
+telegram_app.add_handler(CommandHandler("mood_month", mood_month))
+telegram_app.add_handler(CommandHandler("mood_all", mood_all))
 telegram_app.add_handler(CommandHandler("setcity", set_city))
 telegram_app.add_handler(CommandHandler("mycity", my_city))
 telegram_app.add_handler(CommandHandler("weather", weather))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+# Маршрут вебхука от Telegram
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
     telegram_app.update_queue.put_nowait(update)
     return "ok", 200
 
+# Страница для аптайм-чекировщиков и превью
 @app.route("/")
 def home():
     return "Бот работает через вебхуки ✅"
 
+# ============== Запуск ==============
 if __name__ == "__main__":
-    telegram_app.run_webhook(
-        listen="0.0.0.0",
-        port=8080,
-        url_path=BOT_TOKEN,
-        webhook_url=f"{URL}/{BOT_TOKEN}"
-    )
+    # ВАЖНО: запускаем Application в фоне и ставим вебхук вручную
+    async def _startup():
+        await telegram_app.initialize()
+        await telegram_app.start()
+        # Устанавливаем вебхук
+        await telegram_app.bot.set_webhook(f"{URL}/{BOT_TOKEN}")
+
+    import nest_asyncio
+    nest_asyncio.apply()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(_startup())
+
+    # Запускаем Flask (он держит процесс активным)
+    app.run(host="0.0.0.0", port=8080)
