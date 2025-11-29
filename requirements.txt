@@ -1,3 +1,5 @@
-python-telegram-bot==20.3
-matplotlib
-requests
+python-telegram-bot==20.7
+Flask==3.0.2
+nest_asyncio==1.6.0
+matplotlib==3.8.2
+requests==2.31.0
