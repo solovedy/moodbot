@@ -1,4 +1,11 @@
 run = "python3 main.py"
 
+[env]
+PYTHONUNBUFFERED = "1"
+
+[packager]
+language = "python3"
+
 [deployment]
 run = ["python3", "main.py"]
+deploymentTarget = "cloudrun"
